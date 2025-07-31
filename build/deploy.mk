@@ -2,6 +2,11 @@
 # Deployment and Plugin Management
 # ====================================================================================
 
+## Applies the plugin manifest to the server and webapp codebase
+.PHONY: apply
+apply:
+	pluginctl manifest apply
+
 ## Builds and installs the plugin to a server.
 .PHONY: deploy
 deploy: dist
@@ -9,7 +14,7 @@ deploy: dist
 
 ## Builds and installs the plugin to a server, updating the webapp automatically when changed.
 .PHONY: watch
-watch: server bundle
+watch: apply server bundle
 ifeq ($(MM_DEBUG),)
 	cd webapp && $(NPM) run build:watch
 else

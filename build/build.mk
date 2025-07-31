@@ -80,4 +80,4 @@ endif
 
 ## Builds and bundles the plugin.
 .PHONY: dist
-dist: server webapp bundle
+dist: apply server webapp bundle

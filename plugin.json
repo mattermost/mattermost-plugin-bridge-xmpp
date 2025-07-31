@@ -1,7 +1,7 @@
 {
   "id": "com.mattermost.bridge-xmpp",
-  "name": "Bridge Xmpp",
-  "description": "This plugin serves as a starting point for writing a Mattermost plugin.",
+  "name": "Mattermost Bridge for XMPP",
+  "description": "This plugin provides a bridge connecting Mattermost and XMPP servers.",
   "homepage_url": "https://github.com/mattermost/mattermost-plugin-bridge-xmpp",
   "support_url": "https://github.com/mattermost/mattermost-plugin-bridge-xmpp/issues",
   "icon_path": "assets/logo.png",
@@ -25,5 +25,10 @@
     "footer": "",
     "settings": [],
     "sections": null
+  },
+  "props": {
+    "pluginctl": {
+      "version": "v0.1.1"
+    }
   }
 }
