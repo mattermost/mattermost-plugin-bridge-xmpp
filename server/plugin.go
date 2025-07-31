@@ -27,6 +27,9 @@ type Plugin struct {
 	// commandClient is the client used to register and execute slash commands.
 	commandClient command.Command
 
+	// logger is the main plugin logger
+	logger Logger
+
 	backgroundJob *cluster.Job
 
 	// configurationLock synchronizes access to the configuration.
@@ -40,6 +43,9 @@ type Plugin struct {
 // OnActivate is invoked when the plugin is activated. If an error is returned, the plugin will be deactivated.
 func (p *Plugin) OnActivate() error {
 	p.client = pluginapi.NewClient(p.API, p.Driver)
+
+	// Initialize the logger using Mattermost Plugin API
+	p.logger = NewPluginAPILogger(p.API)
 
 	p.kvstore = kvstore.NewKVStore(p.client)
 

@@ -1,10 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/pkg/errors"
 )
+
+const DefaultXMPPUsernamePrefix = "xmpp"
 
 // configuration captures the plugin's external configuration as exposed in the Mattermost server
 // configuration, as well as values computed from the configuration. Any public fields will be
@@ -18,6 +22,12 @@ import (
 // If you add non-reference types to your configuration struct, be sure to rewrite Clone as a deep
 // copy appropriate for your types.
 type configuration struct {
+	XMPPServerURL      string `json:"xmpp_server_url"`
+	XMPPUsername       string `json:"xmpp_username"`
+	XMPPPassword       string `json:"xmpp_password"`
+	EnableSync         bool   `json:"enable_sync"`
+	XMPPUsernamePrefix string `json:"xmpp_username_prefix"`
+	XMPPResource       string `json:"xmpp_resource"`
 }
 
 // Clone shallow copies the configuration. Your implementation may require a deep copy if
@@ -25,6 +35,50 @@ type configuration struct {
 func (c *configuration) Clone() *configuration {
 	var clone = *c
 	return &clone
+}
+
+// GetXMPPUsernamePrefix returns the configured username prefix, or the default if not set
+func (c *configuration) GetXMPPUsernamePrefix() string {
+	if c.XMPPUsernamePrefix == "" {
+		return DefaultXMPPUsernamePrefix
+	}
+	return c.XMPPUsernamePrefix
+}
+
+// GetXMPPResource returns the configured XMPP resource, or a default if not set
+func (c *configuration) GetXMPPResource() string {
+	if c.XMPPResource == "" {
+		return "mattermost-bridge"
+	}
+	return c.XMPPResource
+}
+
+// IsValid validates the configuration and returns an error if invalid
+func (c *configuration) IsValid() error {
+	if c.EnableSync {
+		if c.XMPPServerURL == "" {
+			return fmt.Errorf("XMPP Server URL is required when sync is enabled")
+		}
+		if c.XMPPUsername == "" {
+			return fmt.Errorf("XMPP Username is required when sync is enabled")
+		}
+		if c.XMPPPassword == "" {
+			return fmt.Errorf("XMPP Password is required when sync is enabled")
+		}
+		
+		// Validate server URL format
+		if !strings.Contains(c.XMPPServerURL, ":") {
+			return fmt.Errorf("XMPP Server URL must include port (e.g., server.com:5222)")
+		}
+		
+		// Validate username prefix doesn't contain invalid characters
+		prefix := c.GetXMPPUsernamePrefix()
+		if strings.ContainsAny(prefix, ":@/\\") {
+			return fmt.Errorf("XMPP Username Prefix cannot contain special characters (:, @, /, \\)")
+		}
+	}
+	
+	return nil
 }
 
 // getConfiguration retrieves the active configuration under lock, making it safe to use
@@ -75,6 +129,11 @@ func (p *Plugin) OnConfigurationChange() error {
 	// Load the public configuration fields from the Mattermost server configuration.
 	if err := p.API.LoadPluginConfiguration(configuration); err != nil {
 		return errors.Wrap(err, "failed to load plugin configuration")
+	}
+
+	// Validate the configuration
+	if err := configuration.IsValid(); err != nil {
+		return errors.Wrap(err, "invalid plugin configuration")
 	}
 
 	p.setConfiguration(configuration)
