@@ -1,9 +1,17 @@
-# Plugin Starter Template
+# Mattermost XMPP Bridge Plugin
 
 [![Build Status](https://github.com/mattermost/mattermost-plugin-bridge-xmpp/actions/workflows/ci.yml/badge.svg)](https://github.com/mattermost/mattermost-plugin-bridge-xmpp/actions/workflows/ci.yml)
 [![E2E Status](https://github.com/mattermost/mattermost-plugin-bridge-xmpp/actions/workflows/e2e.yml/badge.svg)](https://github.com/mattermost/mattermost-plugin-bridge-xmpp/actions/workflows/e2e.yml)
 
-This plugin serves as a starting point for writing a Mattermost plugin. Feel free to base your own plugin off this repository.
+This plugin provides bidirectional message synchronization between Mattermost and XMPP servers, enabling seamless communication across both platforms.
+
+## Features
+
+- Bidirectional message synchronization (Mattermost ↔ XMPP)
+- XMPP Multi-User Chat (MUC) support
+- Configurable username prefixes for XMPP users in Mattermost
+- Ghost user management for cross-platform user representation
+- Comprehensive XMPP client with SASL Plain authentication
 
 To learn more about plugins, see [our plugin documentation](https://developers.mattermost.com/extend/plugins/).
 
@@ -121,6 +129,53 @@ export MM_SERVICESETTINGS_SITEURL=http://localhost:8065
 export MM_ADMIN_TOKEN=j44acwd8obn78cdcx7koid4jkr
 make watch
 ```
+
+## XMPP Client Doctor
+
+The plugin includes a diagnostic tool to test XMPP client connectivity:
+
+```bash
+go run cmd/xmpp-client-doctor/main.go [flags]
+```
+
+### Usage
+
+Test connectivity with default development server settings:
+```bash
+go run cmd/xmpp-client-doctor/main.go
+```
+
+Test with custom XMPP server:
+```bash
+go run cmd/xmpp-client-doctor/main.go \
+  -server="xmpp.example.com:5222" \
+  -username="myuser@example.com" \
+  -password="mypassword" \
+  -resource="test"
+```
+
+### Flags
+
+- `-server`: XMPP server address (default: `localhost:5222`)
+- `-username`: XMPP username/JID (default: `testuser@localhost`)
+- `-password`: XMPP password (default: `testpass`)
+- `-resource`: XMPP resource (default: `doctor`)
+- `-verbose`: Enable verbose logging (default: `true`)
+- `-insecure-skip-verify`: Skip TLS certificate verification for development (default: `true`)
+
+### Development Server
+
+The tool defaults are configured for the development XMPP server in `./sidecar/`. To start the development server:
+
+```bash
+cd sidecar
+docker-compose up -d
+```
+
+The development server runs Openfire XMPP server with:
+- XMPP client connections on port 5222
+- Admin console on http://localhost:9090
+- Default test credentials: `testuser@localhost` / `testpass`
 
 ### Deploying with credentials
 

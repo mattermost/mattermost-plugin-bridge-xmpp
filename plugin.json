@@ -41,7 +41,8 @@
       {
         "key": "XMPPPassword",
         "display_name": "XMPP Password",
-        "type": "password",
+        "type": "text",
+        "secret": true,
         "help_text": "The password for authenticating with the XMPP server"
       },
       {

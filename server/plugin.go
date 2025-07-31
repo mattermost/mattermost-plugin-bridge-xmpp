@@ -5,8 +5,11 @@ import (
 	"sync"
 	"time"
 
+	mattermostbridge "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/bridge/mattermost"
+	xmppbridge "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/bridge/xmpp"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/command"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/store/kvstore"
+	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/xmpp"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -27,8 +30,14 @@ type Plugin struct {
 	// commandClient is the client used to register and execute slash commands.
 	commandClient command.Command
 
+	// xmppClient is the client used to communicate with XMPP servers.
+	xmppClient *xmpp.Client
+
 	// logger is the main plugin logger
 	logger Logger
+
+	// remoteID is the identifier returned by RegisterPluginForSharedChannels
+	remoteID string
 
 	backgroundJob *cluster.Job
 
@@ -38,6 +47,10 @@ type Plugin struct {
 	// configuration is the active plugin configuration. Consult getConfiguration and
 	// setConfiguration for usage.
 	configuration *configuration
+
+	// Bridge components for dependency injection architecture
+	mattermostToXMPPBridge *mattermostbridge.MattermostToXMPPBridge
+	xmppToMattermostBridge *xmppbridge.XMPPToMattermostBridge
 }
 
 // OnActivate is invoked when the plugin is activated. If an error is returned, the plugin will be deactivated.
@@ -48,6 +61,11 @@ func (p *Plugin) OnActivate() error {
 	p.logger = NewPluginAPILogger(p.API)
 
 	p.kvstore = kvstore.NewKVStore(p.client)
+
+	p.initXMPPClient()
+
+	// Initialize bridge components
+	p.initBridges()
 
 	p.commandClient = command.NewCommandHandler(p.client)
 
@@ -83,6 +101,25 @@ func (p *Plugin) ExecuteCommand(c *plugin.Context, args *model.CommandArgs) (*mo
 		return nil, model.NewAppError("ExecuteCommand", "plugin.command.execute_command.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 	return response, nil
+}
+
+func (p *Plugin) initXMPPClient() {
+	config := p.getConfiguration()
+	p.xmppClient = xmpp.NewClient(
+		config.XMPPServerURL,
+		config.XMPPUsername,
+		config.XMPPPassword,
+		config.GetXMPPResource(),
+		p.remoteID,
+	)
+}
+
+func (p *Plugin) initBridges() {
+	// Create bridge instances (Phase 4 will add proper dependencies)
+	p.mattermostToXMPPBridge = mattermostbridge.NewMattermostToXMPPBridge()
+	p.xmppToMattermostBridge = xmppbridge.NewXMPPToMattermostBridge()
+	
+	p.logger.LogInfo("Bridge instances created successfully")
 }
 
 // See https://developers.mattermost.com/extend/plugins/server/reference/
