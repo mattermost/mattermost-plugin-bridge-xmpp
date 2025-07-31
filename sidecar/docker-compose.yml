@@ -1,0 +1,54 @@
+services:
+  openfire:
+    image: nasqueron/openfire:4.7.1
+    container_name: openfire-dev
+    restart: unless-stopped
+    ports:
+      - "9090:9090" # Admin console (HTTP)
+      - "9091:9091" # Admin console (HTTPS)
+      - "5222:5222" # XMPP client connections
+      - "5223:5223" # XMPP client connections (SSL)
+      - "5269:5269" # XMPP server connections
+      - "7777:7777" # File transfer proxy
+    volumes:
+      - openfire_data:/var/lib/openfire
+    depends_on:
+      - postgres
+    networks:
+      - openfire-network
+
+  postgres:
+    image: postgres:15
+    container_name: openfire-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=openfire
+      - POSTGRES_USER=openfire
+      - POSTGRES_PASSWORD=openfire123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # ports:
+    #   - "5432:5432" # Exposed for development access
+    networks:
+      - openfire-network
+
+  adminer:
+    image: adminer:latest
+    container_name: openfire-adminer
+    restart: unless-stopped
+    # ports:
+    #   - "8080:8080" # Database management interface
+    depends_on:
+      - postgres
+    networks:
+      - openfire-network
+
+volumes:
+  openfire_data:
+    driver: local
+  postgres_data:
+    driver: local
+
+networks:
+  openfire-network:
+    driver: bridge
