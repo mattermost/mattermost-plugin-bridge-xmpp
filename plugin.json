@@ -4,7 +4,7 @@
   "description": "This plugin serves as a starting point for writing a Mattermost plugin.",
   "homepage_url": "https://github.com/mattermost/mattermost-plugin-bridge-xmpp",
   "support_url": "https://github.com/mattermost/mattermost-plugin-bridge-xmpp/issues",
-  "icon_path": "assets/bridge-xmpp-icon.svg",
+  "icon_path": "assets/logo.png",
   "version": "",
   "min_server_version": "6.2.1",
   "server": {
