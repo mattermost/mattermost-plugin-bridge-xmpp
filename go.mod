@@ -8,6 +8,8 @@ require (
 	github.com/mattermost/mattermost/server/public v0.1.10
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.10.0
+	mellium.im/sasl v0.3.2
+	mellium.im/xmpp v0.22.0
 )
 
 require (
@@ -59,7 +61,5 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	mellium.im/reader v0.1.0 // indirect
-	mellium.im/sasl v0.3.2 // indirect
 	mellium.im/xmlstream v0.15.4 // indirect
-	mellium.im/xmpp v0.22.0 // indirect
 )

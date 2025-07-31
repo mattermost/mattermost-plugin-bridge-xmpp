@@ -21,8 +21,8 @@ type Client struct {
 	username     string
 	password     string
 	resource     string
-	remoteID     string // Plugin remote ID for metadata
-	serverDomain string // explicit server domain for testing
+	remoteID     string      // Plugin remote ID for metadata
+	serverDomain string      // explicit server domain for testing
 	tlsConfig    *tls.Config // custom TLS configuration
 
 	// XMPP connection
@@ -34,12 +34,12 @@ type Client struct {
 
 // MessageRequest represents a request to send a message.
 type MessageRequest struct {
-	RoomJID      string `json:"room_jid"`      // Required: XMPP room JID
+	RoomJID      string `json:"room_jid"`       // Required: XMPP room JID
 	GhostUserJID string `json:"ghost_user_jid"` // Required: Ghost user JID to send as
-	Message      string `json:"message"`       // Required: Plain text message content
-	HTMLMessage  string `json:"html_message"`  // Optional: HTML formatted message content
-	ThreadID     string `json:"thread_id"`     // Optional: Thread ID
-	PostID       string `json:"post_id"`       // Optional: Mattermost post ID metadata
+	Message      string `json:"message"`        // Required: Plain text message content
+	HTMLMessage  string `json:"html_message"`   // Optional: HTML formatted message content
+	ThreadID     string `json:"thread_id"`      // Optional: Thread ID
+	PostID       string `json:"post_id"`        // Optional: Mattermost post ID metadata
 }
 
 // SendMessageResponse represents the response from XMPP when sending messages.
@@ -249,4 +249,24 @@ func (c *Client) GetUserProfile(userJID string) (*UserProfile, error) {
 		DisplayName: userJID, // Default to JID if no display name available
 	}
 	return profile, nil
+}
+
+// SetOnlinePresence sends an online presence stanza to indicate the client is available
+func (c *Client) SetOnlinePresence() error {
+	if c.session == nil {
+		return errors.New("XMPP session not established")
+	}
+
+	// Create presence stanza indicating we're available
+	presence := stanza.Presence{
+		Type: stanza.AvailablePresence,
+		From: c.jidAddr,
+	}
+
+	// Send the presence stanza
+	if err := c.session.Encode(c.ctx, presence); err != nil {
+		return errors.Wrap(err, "failed to send online presence")
+	}
+
+	return nil
 }

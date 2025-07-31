@@ -67,6 +67,13 @@
         "help_text": "XMPP resource identifier for the bridge client",
         "placeholder": "mattermost-bridge",
         "default": "mattermost-bridge"
+      },
+      {
+        "key": "XMPPInsecureSkipVerify",
+        "display_name": "Skip TLS Certificate Verification",
+        "type": "bool",
+        "help_text": "Skip TLS certificate verification for XMPP connections (use only for testing/development)",
+        "default": false
       }
     ]
   },

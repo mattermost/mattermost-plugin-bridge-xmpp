@@ -6,8 +6,10 @@ import (
 	"time"
 
 	mattermostbridge "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/bridge/mattermost"
-	xmppbridge "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/bridge/xmpp"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/command"
+	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/config"
+	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
+	pluginModel "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/store/kvstore"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/xmpp"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -34,7 +36,7 @@ type Plugin struct {
 	xmppClient *xmpp.Client
 
 	// logger is the main plugin logger
-	logger Logger
+	logger logger.Logger
 
 	// remoteID is the identifier returned by RegisterPluginForSharedChannels
 	remoteID string
@@ -46,11 +48,11 @@ type Plugin struct {
 
 	// configuration is the active plugin configuration. Consult getConfiguration and
 	// setConfiguration for usage.
-	configuration *configuration
+	configuration *config.Configuration
 
 	// Bridge components for dependency injection architecture
-	mattermostToXMPPBridge *mattermostbridge.MattermostToXMPPBridge
-	xmppToMattermostBridge *xmppbridge.XMPPToMattermostBridge
+	mattermostToXMPPBridge pluginModel.Bridge
+	xmppToMattermostBridge pluginModel.Bridge
 }
 
 // OnActivate is invoked when the plugin is activated. If an error is returned, the plugin will be deactivated.
@@ -58,16 +60,29 @@ func (p *Plugin) OnActivate() error {
 	p.client = pluginapi.NewClient(p.API, p.Driver)
 
 	// Initialize the logger using Mattermost Plugin API
-	p.logger = NewPluginAPILogger(p.API)
+	p.logger = logger.NewPluginAPILogger(p.API)
 
 	p.kvstore = kvstore.NewKVStore(p.client)
 
 	p.initXMPPClient()
 
-	// Initialize bridge components
-	p.initBridges()
+	// Load configuration directly
+	cfg := new(config.Configuration)
+	if err := p.API.LoadPluginConfiguration(cfg); err != nil {
+		p.logger.LogWarn("Failed to load plugin configuration during activation", "error", err)
+		cfg = &config.Configuration{} // Use empty config as fallback
+	}
+	p.logger.LogDebug("Loaded configuration in OnActivate", "config", cfg)
+	
+	// Initialize bridges with current configuration
+	p.initBridges(*cfg)
 
-	p.commandClient = command.NewCommandHandler(p.client)
+	p.commandClient = command.NewCommandHandler(p.client, p.mattermostToXMPPBridge)
+
+	// Start the bridge
+	if err := p.mattermostToXMPPBridge.Start(); err != nil {
+		p.logger.LogWarn("Failed to start bridge during activation", "error", err)
+	}
 
 	job, err := cluster.Schedule(
 		p.API,
@@ -91,6 +106,11 @@ func (p *Plugin) OnDeactivate() error {
 			p.API.LogError("Failed to close background job", "err", err)
 		}
 	}
+
+	if err := p.mattermostToXMPPBridge.Stop(); err != nil {
+		p.API.LogError("Failed to stop Mattermost to XMPP bridge", "err", err)
+	}
+
 	return nil
 }
 
@@ -104,22 +124,32 @@ func (p *Plugin) ExecuteCommand(c *plugin.Context, args *model.CommandArgs) (*mo
 }
 
 func (p *Plugin) initXMPPClient() {
-	config := p.getConfiguration()
+	cfg := p.getConfiguration()
 	p.xmppClient = xmpp.NewClient(
-		config.XMPPServerURL,
-		config.XMPPUsername,
-		config.XMPPPassword,
-		config.GetXMPPResource(),
+		cfg.XMPPServerURL,
+		cfg.XMPPUsername,
+		cfg.XMPPPassword,
+		cfg.GetXMPPResource(),
 		p.remoteID,
 	)
 }
 
-func (p *Plugin) initBridges() {
-	// Create bridge instances (Phase 4 will add proper dependencies)
-	p.mattermostToXMPPBridge = mattermostbridge.NewMattermostToXMPPBridge()
-	p.xmppToMattermostBridge = xmppbridge.NewXMPPToMattermostBridge()
-	
-	p.logger.LogInfo("Bridge instances created successfully")
+func (p *Plugin) initBridges(cfg config.Configuration) {
+	if p.mattermostToXMPPBridge == nil {
+		// Create bridge instances with all dependencies and configuration
+		p.mattermostToXMPPBridge = mattermostbridge.NewMattermostToXMPPBridge(
+			p.logger,
+			p.API,
+			p.kvstore,
+			&cfg,
+		)
+		
+		p.logger.LogInfo("Bridge instances created successfully")
+	}
+
+	// if p.xmppToMattermostBridge == nil {
+	// 	p.xmppToMattermostBridge = xmppbridge.NewXMPPToMattermostBridge()
+	// }
 }
 
 // See https://developers.mattermost.com/extend/plugins/server/reference/
