@@ -27,6 +27,7 @@ type Config struct {
 	Resource           string
 	TestRoom           string
 	TestMUC            bool
+	TestDirectMessage  bool
 	Verbose            bool
 	InsecureSkipVerify bool
 }
@@ -41,20 +42,22 @@ func main() {
 	flag.StringVar(&config.Resource, "resource", defaultResource, "XMPP resource")
 	flag.StringVar(&config.TestRoom, "test-room", defaultTestRoom, "MUC room JID for testing")
 	flag.BoolVar(&config.TestMUC, "test-muc", true, "Enable MUC room testing (join/wait/leave)")
+	flag.BoolVar(&config.TestDirectMessage, "test-dm", true, "Enable direct message testing (send message to admin user)")
 	flag.BoolVar(&config.Verbose, "verbose", true, "Enable verbose logging")
 	flag.BoolVar(&config.InsecureSkipVerify, "insecure-skip-verify", true, "Skip TLS certificate verification (for development)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "xmpp-client-doctor - Test XMPP client connectivity and MUC operations\n\n")
 		fmt.Fprintf(os.Stderr, "This tool tests the XMPP client implementation by connecting to an XMPP server,\n")
-		fmt.Fprintf(os.Stderr, "performing connection tests, optionally testing MUC room operations,\n")
+		fmt.Fprintf(os.Stderr, "performing connection tests, optionally testing MUC room operations and direct messages,\n")
 		fmt.Fprintf(os.Stderr, "and then disconnecting gracefully.\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n")
 		fmt.Fprintf(os.Stderr, "  %s [flags]\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Examples:\n")
 		fmt.Fprintf(os.Stderr, "  %s                    # Test basic connectivity\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s --test-muc         # Test connectivity and MUC operations\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s --test-muc=false   # Test connectivity only\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s --test-dm          # Test connectivity and direct messages\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s --test-muc=false --test-dm=false   # Test connectivity only\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nDefault values are configured for the development server in ./sidecar/\n")
@@ -75,6 +78,9 @@ func main() {
 		if config.TestMUC {
 			log.Printf("  Test Room: %s", config.TestRoom)
 		}
+		if config.TestDirectMessage {
+			log.Printf("  Test Direct Messages: enabled")
+		}
 	}
 
 	// Test the XMPP client
@@ -88,6 +94,9 @@ func main() {
 		fmt.Println("✅ XMPP client connectivity test passed!")
 		if config.TestMUC {
 			fmt.Println("✅ XMPP MUC operations test passed!")
+		}
+		if config.TestDirectMessage {
+			fmt.Println("✅ XMPP direct message test passed!")
 		}
 	}
 }
@@ -154,6 +163,7 @@ func testXMPPClient(config *Config) error {
 	}
 
 	var mucDuration time.Duration
+	var dmDuration time.Duration
 	
 	// Test MUC operations if requested
 	if config.TestMUC {
@@ -163,6 +173,16 @@ func testXMPPClient(config *Config) error {
 			return fmt.Errorf("MUC operations test failed: %w", err)
 		}
 		mucDuration = time.Since(start)
+	}
+
+	// Test direct message if requested
+	if config.TestDirectMessage {
+		start = time.Now()
+		err = testDirectMessage(client, config)
+		if err != nil {
+			return fmt.Errorf("direct message test failed: %w", err)
+		}
+		dmDuration = time.Since(start)
 	}
 
 	if config.Verbose {
@@ -185,10 +205,16 @@ func testXMPPClient(config *Config) error {
 		if config.TestMUC {
 			log.Printf("  MUC operations time: %v", mucDuration)
 		}
+		if config.TestDirectMessage {
+			log.Printf("  Direct message time: %v", dmDuration)
+		}
 		log.Printf("  Disconnect time: %v", disconnectDuration)
 		totalTime := connectDuration + pingDuration + disconnectDuration
 		if config.TestMUC {
 			totalTime += mucDuration
+		}
+		if config.TestDirectMessage {
+			totalTime += dmDuration
 		}
 		log.Printf("  Total time: %v", totalTime)
 	}
@@ -260,6 +286,34 @@ func testMUCOperations(client *xmpp.Client, config *Config) error {
 		log.Printf("  Wait time: 5s")
 		log.Printf("  Leave time: %v", leaveDuration)
 		log.Printf("  Total MUC time: %v", joinDuration+sendDuration+5*time.Second+leaveDuration)
+	}
+
+	return nil
+}
+
+func testDirectMessage(client *xmpp.Client, config *Config) error {
+	if config.Verbose {
+		log.Printf("Testing direct message functionality...")
+		log.Printf("Sending test message to admin user...")
+	}
+
+	// Send a test message to the admin user
+	testMessage := fmt.Sprintf("Test direct message from XMPP doctor at %s", time.Now().Format("15:04:05"))
+	adminJID := "admin@localhost" // Default admin user for development server
+	
+	start := time.Now()
+	err := client.SendDirectMessage(adminJID, testMessage)
+	if err != nil {
+		return fmt.Errorf("failed to send direct message to %s: %w", adminJID, err)
+	}
+	sendDuration := time.Since(start)
+
+	if config.Verbose {
+		log.Printf("✅ Successfully sent direct message in %v", sendDuration)
+		log.Printf("Message: %s", testMessage)
+		log.Printf("Recipient: %s", adminJID)
+		log.Printf("Direct message test summary:")
+		log.Printf("  Send message time: %v", sendDuration)
 	}
 
 	return nil

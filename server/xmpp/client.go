@@ -52,6 +52,21 @@ type SendMessageResponse struct {
 	StanzaID string `json:"stanza_id"`
 }
 
+// MessageBody represents the body element of an XMPP message
+type MessageBody struct {
+	XMLName xml.Name `xml:"body"`
+	Text    string   `xml:",chardata"`
+}
+
+// XMPPMessage represents a complete XMPP message stanza
+type XMPPMessage struct {
+	XMLName xml.Name    `xml:"jabber:client message"`
+	Type    string      `xml:"type,attr"`
+	To      string      `xml:"to,attr"`
+	From    string      `xml:"from,attr"`
+	Body    MessageBody `xml:"body"`
+}
+
 // GhostUser represents an XMPP ghost user
 type GhostUser struct {
 	JID         string `json:"jid"`
@@ -324,26 +339,12 @@ func (c *Client) SendMessage(req MessageRequest) (*SendMessageResponse, error) {
 	sendCtx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
 	defer cancel()
 
-	// Create the message body structure
-	type messageBody struct {
-		XMLName xml.Name `xml:"body"`
-		Text    string   `xml:",chardata"`
-	}
-
 	// Create complete message with body
-	type message struct {
-		XMLName xml.Name    `xml:"jabber:client message"`
-		Type    string      `xml:"type,attr"`
-		To      string      `xml:"to,attr"`
-		From    string      `xml:"from,attr"`
-		Body    messageBody `xml:"body"`
-	}
-
-	fullMsg := message{
+	fullMsg := XMPPMessage{
 		Type: "groupchat",
 		To:   to.String(),
 		From: c.jidAddr.String(),
-		Body: messageBody{Text: req.Message},
+		Body: MessageBody{Text: req.Message},
 	}
 
 	// Send the message using the session encoder
@@ -357,6 +358,39 @@ func (c *Client) SendMessage(req MessageRequest) (*SendMessageResponse, error) {
 	}
 
 	return response, nil
+}
+
+// SendDirectMessage sends a direct message to a specific user
+func (c *Client) SendDirectMessage(userJID, message string) error {
+	if c.session == nil {
+		if err := c.Connect(); err != nil {
+			return err
+		}
+	}
+
+	to, err := jid.Parse(userJID)
+	if err != nil {
+		return fmt.Errorf("failed to parse user JID: %w", err)
+	}
+
+	// Create a context with timeout for the send operation
+	sendCtx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+	defer cancel()
+
+	// Create direct message using reusable structs
+	msg := XMPPMessage{
+		Type: "chat",
+		To:   to.String(),
+		From: c.jidAddr.String(),
+		Body: MessageBody{Text: message},
+	}
+
+	// Send the message using the session encoder
+	if err := c.session.Encode(sendCtx, msg); err != nil {
+		return fmt.Errorf("failed to send direct message: %w", err)
+	}
+
+	return nil
 }
 
 // ResolveRoomAlias resolves a room alias to room JID
