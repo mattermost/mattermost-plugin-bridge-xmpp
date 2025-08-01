@@ -209,9 +209,31 @@ func testMUCOperations(client *xmpp.Client, config *Config) error {
 		return fmt.Errorf("failed to join MUC room %s: %w", config.TestRoom, err)
 	}
 	joinDuration := time.Since(start)
+	
+	var sendDuration time.Duration
 
 	if config.Verbose {
 		log.Printf("✅ Successfully joined MUC room in %v", joinDuration)
+		log.Printf("Sending test message to room...")
+	}
+
+	// Send a test message
+	testMessage := fmt.Sprintf("Test message from XMPP doctor at %s", time.Now().Format("15:04:05"))
+	messageReq := xmpp.MessageRequest{
+		RoomJID: config.TestRoom,
+		Message: testMessage,
+	}
+	
+	start = time.Now()
+	_, err = client.SendMessage(messageReq)
+	if err != nil {
+		return fmt.Errorf("failed to send test message to room %s: %w", config.TestRoom, err)
+	}
+	sendDuration = time.Since(start)
+
+	if config.Verbose {
+		log.Printf("✅ Successfully sent message in %v", sendDuration)
+		log.Printf("Message: %s", testMessage)
 		log.Printf("Waiting 5 seconds in the room...")
 	}
 
@@ -234,9 +256,10 @@ func testMUCOperations(client *xmpp.Client, config *Config) error {
 		log.Printf("✅ Successfully left MUC room in %v", leaveDuration)
 		log.Printf("MUC operations summary:")
 		log.Printf("  Join time: %v", joinDuration)
+		log.Printf("  Send message time: %v", sendDuration)
 		log.Printf("  Wait time: 5s")
 		log.Printf("  Leave time: %v", leaveDuration)
-		log.Printf("  Total MUC time: %v", joinDuration+5*time.Second+leaveDuration)
+		log.Printf("  Total MUC time: %v", joinDuration+sendDuration+5*time.Second+leaveDuration)
 	}
 
 	return nil

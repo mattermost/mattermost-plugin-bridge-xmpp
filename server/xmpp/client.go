@@ -4,6 +4,7 @@ package xmpp
 import (
 	"context"
 	"crypto/tls"
+	"encoding/xml"
 	"fmt"
 	"time"
 
@@ -319,16 +320,36 @@ func (c *Client) SendMessage(req MessageRequest) (*SendMessageResponse, error) {
 		return nil, fmt.Errorf("failed to parse destination JID: %w", err)
 	}
 
-	// Create message stanza
-	msg := stanza.Message{
-		Type: stanza.GroupChatMessage,
-		To:   to,
+	// Create a context with timeout for the send operation
+	sendCtx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+	defer cancel()
+
+	// Create the message body structure
+	type messageBody struct {
+		XMLName xml.Name `xml:"body"`
+		Text    string   `xml:",chardata"`
 	}
 
-	// For now, just create a simple message structure
-	// Proper implementation would require encoding the message body
-	_ = msg
-	_ = req.Message
+	// Create complete message with body
+	type message struct {
+		XMLName xml.Name    `xml:"jabber:client message"`
+		Type    string      `xml:"type,attr"`
+		To      string      `xml:"to,attr"`
+		From    string      `xml:"from,attr"`
+		Body    messageBody `xml:"body"`
+	}
+
+	fullMsg := message{
+		Type: "groupchat",
+		To:   to.String(),
+		From: c.jidAddr.String(),
+		Body: messageBody{Text: req.Message},
+	}
+
+	// Send the message using the session encoder
+	if err := c.session.Encode(sendCtx, fullMsg); err != nil {
+		return nil, fmt.Errorf("failed to send message: %w", err)
+	}
 
 	// Generate a response
 	response := &SendMessageResponse{
