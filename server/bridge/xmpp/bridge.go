@@ -441,3 +441,48 @@ func (b *xmppBridge) GetChannelRoomMapping(channelID string) (string, error) {
 
 	return roomJID, nil
 }
+
+// DeleteChannelRoomMapping removes a mapping between a Mattermost channel and XMPP room
+func (b *xmppBridge) DeleteChannelRoomMapping(channelID string) error {
+	if b.kvstore == nil {
+		return fmt.Errorf("KV store not initialized")
+	}
+
+	// Get the room JID from the mapping before deleting
+	roomJID, err := b.GetChannelRoomMapping(channelID)
+	if err != nil {
+		return fmt.Errorf("failed to get channel mapping: %w", err)
+	}
+	if roomJID == "" {
+		return fmt.Errorf("channel is not mapped to any room")
+	}
+
+	// Delete forward and reverse mappings from KV store
+	err = b.kvstore.Delete(kvstore.BuildChannelMapKey("mattermost", channelID))
+	if err != nil {
+		return fmt.Errorf("failed to delete channel room mapping: %w", err)
+	}
+
+	err = b.kvstore.Delete(kvstore.BuildChannelMapKey("xmpp", roomJID))
+	if err != nil {
+		return fmt.Errorf("failed to delete reverse room mapping: %w", err)
+	}
+
+	// Remove from local cache
+	b.mappingsMu.Lock()
+	delete(b.channelMappings, channelID)
+	b.mappingsMu.Unlock()
+
+	// Leave the room if connected
+	if b.connected.Load() && b.xmppClient != nil {
+		if err := b.xmppClient.LeaveRoom(roomJID); err != nil {
+			b.logger.LogWarn("Failed to leave unmapped room", "channel_id", channelID, "room_jid", roomJID, "error", err)
+			// Don't fail the entire operation if leaving the room fails
+		} else {
+			b.logger.LogInfo("Left XMPP room after unmapping", "channel_id", channelID, "room_jid", roomJID)
+		}
+	}
+
+	b.logger.LogInfo("Deleted channel room mapping", "channel_id", channelID, "room_jid", roomJID)
+	return nil
+}

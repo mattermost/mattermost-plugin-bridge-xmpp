@@ -29,6 +29,9 @@ func NewCommandHandler(client *pluginapi.Client, bridgeManager pluginModel.Bridg
 	mapSubcommand.AddTextArgument("XMPP room JID (e.g., room@conference.example.com)", "[room_jid]", "")
 	xmppBridgeData.AddCommand(mapSubcommand)
 
+	unmapSubcommand := model.NewAutocompleteData("unmap", "", "Unmap current channel from XMPP room")
+	xmppBridgeData.AddCommand(unmapSubcommand)
+
 	statusSubcommand := model.NewAutocompleteData("status", "", "Show bridge connection status")
 	xmppBridgeData.AddCommand(statusSubcommand)
 
@@ -36,7 +39,7 @@ func NewCommandHandler(client *pluginapi.Client, bridgeManager pluginModel.Bridg
 		Trigger:          xmppBridgeCommandTrigger,
 		AutoComplete:     true,
 		AutoCompleteDesc: "Manage XMPP bridge mappings",
-		AutoCompleteHint: "[map|status]",
+		AutoCompleteHint: "[map|unmap|status]",
 		AutocompleteData: xmppBridgeData,
 	})
 	if err != nil {
@@ -72,6 +75,7 @@ func (c *Handler) executeXMPPBridgeCommand(args *model.CommandArgs) *model.Comma
 
 **Available commands:**
 - ` + "`/xmppbridge map <room_jid>`" + ` - Map current channel to XMPP room
+- ` + "`/xmppbridge unmap`" + ` - Unmap current channel from XMPP room
 - ` + "`/xmppbridge status`" + ` - Show bridge connection status
 
 **Example:**
@@ -83,6 +87,8 @@ func (c *Handler) executeXMPPBridgeCommand(args *model.CommandArgs) *model.Comma
 	switch subcommand {
 	case "map":
 		return c.executeMapCommand(args, fields)
+	case "unmap":
+		return c.executeUnmapCommand(args)
 	case "status":
 		return c.executeStatusCommand(args)
 	default:
@@ -155,8 +161,51 @@ func (c *Handler) executeMapCommand(args *model.CommandArgs, fields []string) *m
 	}
 
 	return &model.CommandResponse{
-		ResponseType: model.CommandResponseTypeInChannel,
+		ResponseType: model.CommandResponseTypeEphemeral,
 		Text:         fmt.Sprintf("✅ Successfully mapped this channel to XMPP room: `%s`", roomJID),
+	}
+}
+
+func (c *Handler) executeUnmapCommand(args *model.CommandArgs) *model.CommandResponse {
+	channelID := args.ChannelId
+
+	// Get the XMPP bridge
+	bridge, err := c.bridgeManager.GetBridge("xmpp")
+	if err != nil {
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text:         "❌ XMPP bridge is not available. Please check the plugin configuration.",
+		}
+	}
+
+	// Check if channel is mapped
+	roomJID, err := bridge.GetChannelRoomMapping(channelID)
+	if err != nil {
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text:         fmt.Sprintf("Error checking existing mapping: %v", err),
+		}
+	}
+
+	if roomJID == "" {
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text:         "❌ This channel is not mapped to any XMPP room.",
+		}
+	}
+
+	// Delete the mapping
+	err = bridge.DeleteChannelRoomMapping(channelID)
+	if err != nil {
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text:         fmt.Sprintf("❌ Failed to unmap channel: %v", err),
+		}
+	}
+
+	return &model.CommandResponse{
+		ResponseType: model.CommandResponseTypeEphemeral,
+		Text:         fmt.Sprintf("✅ Successfully unmapped this channel from XMPP room: `%s`", roomJID),
 	}
 }
 
@@ -201,6 +250,7 @@ func (c *Handler) executeStatusCommand(args *model.CommandArgs) *model.CommandRe
 %s
 
 **Commands:**
-- Use `+"`/xmppbridge map <room_jid>`"+` to map this channel to an XMPP room`, statusText, mappingText),
+- Use `+"`/xmppbridge map <room_jid>`"+` to map this channel to an XMPP room
+- Use `+"`/xmppbridge unmap`"+` to unmap this channel from an XMPP room`, statusText, mappingText),
 	}
 }
