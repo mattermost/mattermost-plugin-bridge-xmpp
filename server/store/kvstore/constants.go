@@ -77,3 +77,11 @@ func BuildXMPPEventPostKey(xmppEventID string) string {
 func BuildXMPPReactionKey(reactionEventID string) string {
 	return KeyPrefixXMPPReaction + reactionEventID
 }
+
+// ExtractChannelIDFromKey extracts the channel ID from a channel mapping key
+func ExtractChannelIDFromKey(key string) string {
+	if len(key) <= len(KeyPrefixChannelMapping) {
+		return ""
+	}
+	return key[len(KeyPrefixChannelMapping):]
+}

@@ -10,9 +10,9 @@ import (
 	"mellium.im/sasl"
 	"mellium.im/xmpp"
 	"mellium.im/xmpp/jid"
+	"mellium.im/xmpp/muc"
+	"mellium.im/xmpp/mux"
 	"mellium.im/xmpp/stanza"
-
-	"github.com/pkg/errors"
 )
 
 // Client represents an XMPP client for communicating with XMPP servers.
@@ -26,10 +26,14 @@ type Client struct {
 	tlsConfig    *tls.Config // custom TLS configuration
 
 	// XMPP connection
-	session *xmpp.Session
-	jidAddr jid.JID
-	ctx     context.Context
-	cancel  context.CancelFunc
+	session       *xmpp.Session
+	jidAddr       jid.JID
+	ctx           context.Context
+	cancel        context.CancelFunc
+	mucClient     *muc.Client
+	mux           *mux.ServeMux
+	sessionReady  chan struct{}
+	sessionServing bool
 }
 
 // MessageRequest represents a request to send a message.
@@ -62,14 +66,20 @@ type UserProfile struct {
 // NewClient creates a new XMPP client.
 func NewClient(serverURL, username, password, resource, remoteID string) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
+	mucClient := &muc.Client{}
+	mux := mux.New("jabber:client", muc.HandleClient(mucClient))
+	
 	return &Client{
-		serverURL: serverURL,
-		username:  username,
-		password:  password,
-		resource:  resource,
-		remoteID:  remoteID,
-		ctx:       ctx,
-		cancel:    cancel,
+		serverURL:    serverURL,
+		username:     username,
+		password:     password,
+		resource:     resource,
+		remoteID:     remoteID,
+		ctx:          ctx,
+		cancel:       cancel,
+		mucClient:    mucClient,
+		mux:          mux,
+		sessionReady: make(chan struct{}),
 	}
 }
 
@@ -91,18 +101,22 @@ func (c *Client) Connect() error {
 		return nil // Already connected
 	}
 
+	// Reset session ready channel for reconnection
+	c.sessionReady = make(chan struct{})
+	c.sessionServing = false
+
 	// Parse JID
 	var err error
 	c.jidAddr, err = jid.Parse(c.username)
 	if err != nil {
-		return errors.Wrap(err, "failed to parse username as JID")
+		return fmt.Errorf("failed to parse username as JID: %w", err)
 	}
 
 	// Add resource if not present
 	if c.jidAddr.Resourcepart() == "" {
 		c.jidAddr, err = c.jidAddr.WithResource(c.resource)
 		if err != nil {
-			return errors.Wrap(err, "failed to add resource to JID")
+			return fmt.Errorf("failed to add resource to JID: %w", err)
 		}
 	}
 
@@ -125,10 +139,49 @@ func (c *Client) Connect() error {
 		xmpp.BindResource(),
 	)
 	if err != nil {
-		return errors.Wrap(err, "failed to establish XMPP session")
+		return fmt.Errorf("failed to establish XMPP session: %w", err)
 	}
 
-	return nil
+	// Start serving the session with the multiplexer to handle incoming stanzas
+	go c.serveSession()
+
+	// Wait for the session to be ready with a timeout
+	select {
+	case <-c.sessionReady:
+		if !c.sessionServing {
+			return fmt.Errorf("failed to start session serving")
+		}
+		return nil
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("timeout waiting for session to be ready")
+	}
+}
+
+// serveSession handles incoming XMPP stanzas through the multiplexer
+func (c *Client) serveSession() {
+	if c.session == nil || c.mux == nil {
+		close(c.sessionReady) // Signal failure
+		return
+	}
+	
+	// Signal that the session is ready to serve
+	c.sessionServing = true
+	close(c.sessionReady)
+	
+	err := c.session.Serve(c.mux)
+	if err != nil {
+		c.sessionServing = false
+		// Handle session serve errors
+		// In production, you might want to log this error or attempt reconnection
+		select {
+		case <-c.ctx.Done():
+			// Context cancelled, normal shutdown
+			return
+		default:
+			// Unexpected error during session serve
+			// Could trigger reconnection logic here
+		}
+	}
 }
 
 // Disconnect closes the XMPP connection
@@ -137,7 +190,7 @@ func (c *Client) Disconnect() error {
 		err := c.session.Close()
 		c.session = nil
 		if err != nil {
-			return errors.Wrap(err, "failed to close XMPP session")
+			return fmt.Errorf("failed to close XMPP session: %w", err)
 		}
 	}
 
@@ -159,7 +212,7 @@ func (c *Client) TestConnection() error {
 	// For now, just check if session exists and is not closed
 	// A proper ping implementation would require more complex IQ handling
 	if c.session == nil {
-		return errors.New("XMPP session is not established")
+		return fmt.Errorf("XMPP session is not established")
 	}
 
 	return nil
@@ -173,14 +226,83 @@ func (c *Client) JoinRoom(roomJID string) error {
 		}
 	}
 
-	room, err := jid.Parse(roomJID)
-	if err != nil {
-		return errors.Wrap(err, "failed to parse room JID")
+	if c.mucClient == nil {
+		return fmt.Errorf("MUC client not initialized")
 	}
 
-	// For now, just store that we would join the room
-	// Proper MUC implementation would require more complex presence handling
-	_ = room
+	room, err := jid.Parse(roomJID)
+	if err != nil {
+		return fmt.Errorf("failed to parse room JID: %w", err)
+	}
+
+	// Use our username as nickname
+	nickname := c.jidAddr.Localpart()
+	roomWithNickname, err := room.WithResource(nickname)
+	if err != nil {
+		return fmt.Errorf("failed to add nickname to room JID: %w", err)
+	}
+
+	// Create a context with timeout for the join operation
+	joinCtx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+	defer cancel()
+
+	// Join the MUC room using the proper MUC client with timeout
+	opts := []muc.Option{
+		muc.MaxBytes(0), // Don't limit message history
+	}
+	
+	// Run the join operation in a goroutine to avoid blocking
+	errChan := make(chan error, 1)
+	go func() {
+		_, err := c.mucClient.Join(joinCtx, roomWithNickname, c.session, opts...)
+		errChan <- err
+	}()
+
+	// Wait for join to complete or timeout
+	select {
+	case err := <-errChan:
+		if err != nil {
+			return fmt.Errorf("failed to join MUC room: %w", err)
+		}
+		return nil
+	case <-joinCtx.Done():
+		return fmt.Errorf("timeout joining MUC room %s", roomJID)
+	}
+}
+
+// LeaveRoom leaves an XMPP Multi-User Chat room
+func (c *Client) LeaveRoom(roomJID string) error {
+	if c.session == nil {
+		return fmt.Errorf("XMPP session not established")
+	}
+
+	if c.mucClient == nil {
+		return fmt.Errorf("MUC client not initialized")
+	}
+
+	room, err := jid.Parse(roomJID)
+	if err != nil {
+		return fmt.Errorf("failed to parse room JID: %w", err)
+	}
+
+	// Use our username as nickname
+	nickname := c.jidAddr.Localpart()
+	roomWithNickname, err := room.WithResource(nickname)
+	if err != nil {
+		return fmt.Errorf("failed to add nickname to room JID: %w", err)
+	}
+
+	// Send unavailable presence to leave the room
+	presence := stanza.Presence{
+		From: c.jidAddr,
+		To:   roomWithNickname,
+		Type: stanza.UnavailablePresence,
+	}
+
+	if err := c.session.Encode(c.ctx, presence); err != nil {
+		return fmt.Errorf("failed to send leave presence to MUC room: %w", err)
+	}
+
 	return nil
 }
 
@@ -194,7 +316,7 @@ func (c *Client) SendMessage(req MessageRequest) (*SendMessageResponse, error) {
 
 	to, err := jid.Parse(req.RoomJID)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to parse destination JID")
+		return nil, fmt.Errorf("failed to parse destination JID: %w", err)
 	}
 
 	// Create message stanza
@@ -216,30 +338,13 @@ func (c *Client) SendMessage(req MessageRequest) (*SendMessageResponse, error) {
 	return response, nil
 }
 
-// CreateGhostUser creates a ghost user representation
-func (c *Client) CreateGhostUser(mattermostUserID, displayName string, avatarData []byte, avatarContentType string) (*GhostUser, error) {
-	domain := c.jidAddr.Domain().String()
-	if c.serverDomain != "" {
-		domain = c.serverDomain
-	}
-
-	ghostJID := fmt.Sprintf("mattermost_%s@%s", mattermostUserID, domain)
-
-	ghost := &GhostUser{
-		JID:         ghostJID,
-		DisplayName: displayName,
-	}
-
-	return ghost, nil
-}
-
 // ResolveRoomAlias resolves a room alias to room JID
 func (c *Client) ResolveRoomAlias(roomAlias string) (string, error) {
 	// For XMPP, return the alias as-is if it's already a valid JID
 	if _, err := jid.Parse(roomAlias); err == nil {
 		return roomAlias, nil
 	}
-	return "", errors.New("invalid room alias/JID")
+	return "", fmt.Errorf("invalid room alias/JID")
 }
 
 // GetUserProfile gets user profile information
@@ -254,7 +359,7 @@ func (c *Client) GetUserProfile(userJID string) (*UserProfile, error) {
 // SetOnlinePresence sends an online presence stanza to indicate the client is available
 func (c *Client) SetOnlinePresence() error {
 	if c.session == nil {
-		return errors.New("XMPP session not established")
+		return fmt.Errorf("XMPP session not established")
 	}
 
 	// Create presence stanza indicating we're available
@@ -265,7 +370,7 @@ func (c *Client) SetOnlinePresence() error {
 
 	// Send the presence stanza
 	if err := c.session.Encode(c.ctx, presence); err != nil {
-		return errors.Wrap(err, "failed to send online presence")
+		return fmt.Errorf("failed to send online presence: %w", err)
 	}
 
 	return nil

@@ -10,8 +10,8 @@ import (
 )
 
 type Handler struct {
-	client *pluginapi.Client
-	bridge pluginModel.Bridge
+	client        *pluginapi.Client
+	bridgeManager pluginModel.BridgeManager
 }
 
 type Command interface {
@@ -22,7 +22,7 @@ type Command interface {
 const xmppBridgeCommandTrigger = "xmppbridge"
 
 // Register all your slash commands in the NewCommandHandler function.
-func NewCommandHandler(client *pluginapi.Client, bridge pluginModel.Bridge) Command {
+func NewCommandHandler(client *pluginapi.Client, bridgeManager pluginModel.BridgeManager) Command {
 	// Register XMPP bridge command
 	xmppBridgeData := model.NewAutocompleteData(xmppBridgeCommandTrigger, "", "Manage XMPP bridge")
 	mapSubcommand := model.NewAutocompleteData("map", "[room_jid]", "Map current channel to XMPP room")
@@ -44,8 +44,8 @@ func NewCommandHandler(client *pluginapi.Client, bridge pluginModel.Bridge) Comm
 	}
 
 	return &Handler{
-		client: client,
-		bridge: bridge,
+		client:        client,
+		bridgeManager: bridgeManager,
 	}
 }
 
@@ -112,8 +112,17 @@ func (c *Handler) executeMapCommand(args *model.CommandArgs, fields []string) *m
 		}
 	}
 
+	// Get the XMPP bridge
+	bridge, err := c.bridgeManager.GetBridge("xmpp")
+	if err != nil {
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text:         "❌ XMPP bridge is not available. Please check the plugin configuration.",
+		}
+	}
+
 	// Check if bridge is connected
-	if !c.bridge.IsConnected() {
+	if !bridge.IsConnected() {
 		return &model.CommandResponse{
 			ResponseType: model.CommandResponseTypeEphemeral,
 			Text:         "❌ XMPP bridge is not connected. Please check the plugin configuration.",
@@ -121,7 +130,7 @@ func (c *Handler) executeMapCommand(args *model.CommandArgs, fields []string) *m
 	}
 
 	// Check if channel is already mapped
-	existingMapping, err := c.bridge.GetChannelRoomMapping(channelID)
+	existingMapping, err := bridge.GetChannelRoomMapping(channelID)
 	if err != nil {
 		return &model.CommandResponse{
 			ResponseType: model.CommandResponseTypeEphemeral,
@@ -137,7 +146,7 @@ func (c *Handler) executeMapCommand(args *model.CommandArgs, fields []string) *m
 	}
 
 	// Create the mapping
-	err = c.bridge.CreateChannelRoomMapping(channelID, roomJID)
+	err = bridge.CreateChannelRoomMapping(channelID, roomJID)
 	if err != nil {
 		return &model.CommandResponse{
 			ResponseType: model.CommandResponseTypeEphemeral,
@@ -152,7 +161,16 @@ func (c *Handler) executeMapCommand(args *model.CommandArgs, fields []string) *m
 }
 
 func (c *Handler) executeStatusCommand(args *model.CommandArgs) *model.CommandResponse {
-	isConnected := c.bridge.IsConnected()
+	// Get the XMPP bridge
+	bridge, err := c.bridgeManager.GetBridge("xmpp")
+	if err != nil {
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text:         "❌ XMPP bridge is not available. Please check the plugin configuration.",
+		}
+	}
+
+	isConnected := bridge.IsConnected()
 
 	var statusText string
 	if isConnected {
@@ -163,7 +181,7 @@ func (c *Handler) executeStatusCommand(args *model.CommandArgs) *model.CommandRe
 
 	// Check if current channel is mapped
 	channelID := args.ChannelId
-	roomJID, err := c.bridge.GetChannelRoomMapping(channelID)
+	roomJID, err := bridge.GetChannelRoomMapping(channelID)
 
 	var mappingText string
 	if err != nil {

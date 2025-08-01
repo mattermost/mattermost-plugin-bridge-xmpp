@@ -17,6 +17,7 @@ const (
 	defaultUsername = "testuser@localhost"
 	defaultPassword = "testpass"
 	defaultResource = "doctor"
+	defaultTestRoom = "test1@conference.localhost"
 )
 
 type Config struct {
@@ -24,6 +25,8 @@ type Config struct {
 	Username           string
 	Password           string
 	Resource           string
+	TestRoom           string
+	TestMUC            bool
 	Verbose            bool
 	InsecureSkipVerify bool
 }
@@ -36,19 +39,27 @@ func main() {
 	flag.StringVar(&config.Username, "username", defaultUsername, "XMPP username/JID")
 	flag.StringVar(&config.Password, "password", defaultPassword, "XMPP password")
 	flag.StringVar(&config.Resource, "resource", defaultResource, "XMPP resource")
+	flag.StringVar(&config.TestRoom, "test-room", defaultTestRoom, "MUC room JID for testing")
+	flag.BoolVar(&config.TestMUC, "test-muc", true, "Enable MUC room testing (join/wait/leave)")
 	flag.BoolVar(&config.Verbose, "verbose", true, "Enable verbose logging")
 	flag.BoolVar(&config.InsecureSkipVerify, "insecure-skip-verify", true, "Skip TLS certificate verification (for development)")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "xmpp-client-doctor - Test XMPP client connectivity\n\n")
+		fmt.Fprintf(os.Stderr, "xmpp-client-doctor - Test XMPP client connectivity and MUC operations\n\n")
 		fmt.Fprintf(os.Stderr, "This tool tests the XMPP client implementation by connecting to an XMPP server,\n")
-		fmt.Fprintf(os.Stderr, "performing a connection test, and then disconnecting gracefully.\n\n")
+		fmt.Fprintf(os.Stderr, "performing connection tests, optionally testing MUC room operations,\n")
+		fmt.Fprintf(os.Stderr, "and then disconnecting gracefully.\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n")
 		fmt.Fprintf(os.Stderr, "  %s [flags]\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Examples:\n")
+		fmt.Fprintf(os.Stderr, "  %s                    # Test basic connectivity\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s --test-muc         # Test connectivity and MUC operations\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s --test-muc=false   # Test connectivity only\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nDefault values are configured for the development server in ./sidecar/\n")
 		fmt.Fprintf(os.Stderr, "Make sure to start the development server with: cd sidecar && docker-compose up -d\n")
+		fmt.Fprintf(os.Stderr, "For MUC testing, create the test room 'test1' via the admin console at http://localhost:9090\n")
 	}
 
 	flag.Parse()
@@ -61,6 +72,9 @@ func main() {
 		log.Printf("  Username: %s", config.Username)
 		log.Printf("  Resource: %s", config.Resource)
 		log.Printf("  Password: %s", maskPassword(config.Password))
+		if config.TestMUC {
+			log.Printf("  Test Room: %s", config.TestRoom)
+		}
 	}
 
 	// Test the XMPP client
@@ -72,6 +86,9 @@ func main() {
 		log.Printf("✅ XMPP client test completed successfully!")
 	} else {
 		fmt.Println("✅ XMPP client connectivity test passed!")
+		if config.TestMUC {
+			fmt.Println("✅ XMPP MUC operations test passed!")
+		}
 	}
 }
 
@@ -134,6 +151,21 @@ func testXMPPClient(config *Config) error {
 
 	if config.Verbose {
 		log.Printf("✅ Connection health test passed in %v", pingDuration)
+	}
+
+	var mucDuration time.Duration
+	
+	// Test MUC operations if requested
+	if config.TestMUC {
+		start = time.Now()
+		err = testMUCOperations(client, config)
+		if err != nil {
+			return fmt.Errorf("MUC operations test failed: %w", err)
+		}
+		mucDuration = time.Since(start)
+	}
+
+	if config.Verbose {
 		log.Printf("Disconnecting from XMPP server...")
 	}
 
@@ -150,8 +182,61 @@ func testXMPPClient(config *Config) error {
 		log.Printf("Connection summary:")
 		log.Printf("  Connect time: %v", connectDuration)
 		log.Printf("  Ping time: %v", pingDuration)
+		if config.TestMUC {
+			log.Printf("  MUC operations time: %v", mucDuration)
+		}
 		log.Printf("  Disconnect time: %v", disconnectDuration)
-		log.Printf("  Total time: %v", connectDuration+pingDuration+disconnectDuration)
+		totalTime := connectDuration + pingDuration + disconnectDuration
+		if config.TestMUC {
+			totalTime += mucDuration
+		}
+		log.Printf("  Total time: %v", totalTime)
+	}
+
+	return nil
+}
+
+func testMUCOperations(client *xmpp.Client, config *Config) error {
+	if config.Verbose {
+		log.Printf("Testing MUC operations with room: %s", config.TestRoom)
+		log.Printf("Attempting to join MUC room...")
+	}
+
+	// Test joining the room
+	start := time.Now()
+	err := client.JoinRoom(config.TestRoom)
+	if err != nil {
+		return fmt.Errorf("failed to join MUC room %s: %w", config.TestRoom, err)
+	}
+	joinDuration := time.Since(start)
+
+	if config.Verbose {
+		log.Printf("✅ Successfully joined MUC room in %v", joinDuration)
+		log.Printf("Waiting 5 seconds in the room...")
+	}
+
+	// Wait 5 seconds
+	time.Sleep(5 * time.Second)
+
+	if config.Verbose {
+		log.Printf("Attempting to leave MUC room...")
+	}
+
+	// Test leaving the room
+	start = time.Now()
+	err = client.LeaveRoom(config.TestRoom)
+	if err != nil {
+		return fmt.Errorf("failed to leave MUC room %s: %w", config.TestRoom, err)
+	}
+	leaveDuration := time.Since(start)
+
+	if config.Verbose {
+		log.Printf("✅ Successfully left MUC room in %v", leaveDuration)
+		log.Printf("MUC operations summary:")
+		log.Printf("  Join time: %v", joinDuration)
+		log.Printf("  Wait time: 5s")
+		log.Printf("  Leave time: %v", leaveDuration)
+		log.Printf("  Total MUC time: %v", joinDuration+5*time.Second+leaveDuration)
 	}
 
 	return nil

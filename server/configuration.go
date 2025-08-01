@@ -67,10 +67,11 @@ func (p *Plugin) OnConfigurationChange() error {
 
 	p.setConfiguration(configuration)
 
-	// Update bridge configurations (only if bridges have been initialized)
-	if p.mattermostToXMPPBridge != nil {
-		if err := p.mattermostToXMPPBridge.UpdateConfiguration(configuration); err != nil {
-			p.logger.LogWarn("Failed to update Mattermost to XMPP bridge configuration", "error", err)
+	// Update bridge configurations only if bridge manager has been initialized. This prevents a
+	// panic if we are called before OnActivate.
+	if p.bridgeManager != nil {
+		if err := p.bridgeManager.OnPluginConfigurationChange(configuration); err != nil {
+			p.logger.LogWarn("Failed to update bridge configurations", "error", err)
 		}
 	}
 

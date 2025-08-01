@@ -74,7 +74,26 @@ After completing the setup wizard:
    - **Email**: `testuser@localhost`
 4. Click **Create User**
 
-### 4. Test Connectivity
+### 4. Create Test MUC Room
+
+For testing Multi-User Chat functionality, create a test room:
+
+1. In the admin console, go to **Group Chat** → **Create New Room**
+2. Fill in the room details:
+   - **Room ID**: `test1`
+   - **Room Name**: `Test Room 1`
+   - **Description**: `Test room for XMPP bridge development`
+   - **Subject**: `Development Test Room`
+3. Configure room settings:
+   - **Room Type**: Public (searchable and accessible)
+   - **Persistent**: Yes (room survives server restarts)
+   - **Max occupants**: 50 (or leave default)
+   - **Enable**: Yes
+4. Click **Create Room**
+
+The room will be accessible as `test1@conference.localhost` for testing MUC operations.
+
+### 5. Test Connectivity
 
 Run the doctor tool to verify everything is working:
 
@@ -83,6 +102,17 @@ make devserver_doctor
 ```
 
 You should see successful connection, ping, and disconnect messages.
+
+#### Test MUC Operations
+
+To test Multi-User Chat room operations (requires the test room created above):
+
+```bash
+# Test MUC room join/leave operations
+go run cmd/xmpp-client-doctor/main.go --test-muc
+```
+
+This will test joining the `test1@conference.localhost` room, waiting 5 seconds, and then leaving.
 
 ## Server Details
 

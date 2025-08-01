@@ -1,11 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
 
-	mattermostbridge "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/bridge/mattermost"
+	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/bridge"
+	xmppbridge "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/bridge/xmpp"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/command"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/config"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
@@ -50,9 +52,8 @@ type Plugin struct {
 	// setConfiguration for usage.
 	configuration *config.Configuration
 
-	// Bridge components for dependency injection architecture
-	mattermostToXMPPBridge pluginModel.Bridge
-	xmppToMattermostBridge pluginModel.Bridge
+	// Bridge manager for managing all bridge instances
+	bridgeManager pluginModel.BridgeManager
 }
 
 // OnActivate is invoked when the plugin is activated. If an error is returned, the plugin will be deactivated.
@@ -67,21 +68,25 @@ func (p *Plugin) OnActivate() error {
 	p.initXMPPClient()
 
 	// Load configuration directly
-	cfg := new(config.Configuration)
-	if err := p.API.LoadPluginConfiguration(cfg); err != nil {
-		p.logger.LogWarn("Failed to load plugin configuration during activation", "error", err)
-		cfg = &config.Configuration{} // Use empty config as fallback
-	}
+	cfg := p.getConfiguration()
 	p.logger.LogDebug("Loaded configuration in OnActivate", "config", cfg)
-	
-	// Initialize bridges with current configuration
-	p.initBridges(*cfg)
 
-	p.commandClient = command.NewCommandHandler(p.client, p.mattermostToXMPPBridge)
+	// Initialize bridge manager
+	p.bridgeManager = bridge.NewManager(p.logger)
 
-	// Start the bridge
-	if err := p.mattermostToXMPPBridge.Start(); err != nil {
-		p.logger.LogWarn("Failed to start bridge during activation", "error", err)
+	// Initialize and register bridges with current configuration
+	if err := p.initBridges(*cfg); err != nil {
+		p.logger.LogError("Failed to initialize bridges", "error", err)
+		return fmt.Errorf("failed to initialize bridges: %w", err)
+	}
+
+	p.commandClient = command.NewCommandHandler(p.client, p.bridgeManager)
+
+	// Start all bridges
+	for _, bridgeName := range p.bridgeManager.ListBridges() {
+		if err := p.bridgeManager.StartBridge(bridgeName); err != nil {
+			p.logger.LogWarn("Failed to start bridge during activation", "bridge", bridgeName, "error", err)
+		}
 	}
 
 	job, err := cluster.Schedule(
@@ -107,8 +112,10 @@ func (p *Plugin) OnDeactivate() error {
 		}
 	}
 
-	if err := p.mattermostToXMPPBridge.Stop(); err != nil {
-		p.API.LogError("Failed to stop Mattermost to XMPP bridge", "err", err)
+	if p.bridgeManager != nil {
+		if err := p.bridgeManager.Shutdown(); err != nil {
+			p.API.LogError("Failed to shutdown bridge manager", "err", err)
+		}
 	}
 
 	return nil
@@ -134,22 +141,21 @@ func (p *Plugin) initXMPPClient() {
 	)
 }
 
-func (p *Plugin) initBridges(cfg config.Configuration) {
-	if p.mattermostToXMPPBridge == nil {
-		// Create bridge instances with all dependencies and configuration
-		p.mattermostToXMPPBridge = mattermostbridge.NewMattermostToXMPPBridge(
-			p.logger,
-			p.API,
-			p.kvstore,
-			&cfg,
-		)
-		
-		p.logger.LogInfo("Bridge instances created successfully")
+func (p *Plugin) initBridges(cfg config.Configuration) error {
+	// Create and register XMPP bridge
+	bridge := xmppbridge.NewBridge(
+		p.logger,
+		p.API,
+		p.kvstore,
+		&cfg,
+	)
+
+	if err := p.bridgeManager.RegisterBridge("xmpp", bridge); err != nil {
+		return fmt.Errorf("failed to register XMPP bridge: %w", err)
 	}
 
-	// if p.xmppToMattermostBridge == nil {
-	// 	p.xmppToMattermostBridge = xmppbridge.NewXMPPToMattermostBridge()
-	// }
+	p.logger.LogInfo("Bridge instances created and registered successfully")
+	return nil
 }
 
 // See https://developers.mattermost.com/extend/plugins/server/reference/
