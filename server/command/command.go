@@ -118,7 +118,7 @@ func (c *Handler) executeMapCommand(args *model.CommandArgs, fields []string) *m
 		}
 	}
 
-	// Get the XMPP bridge
+	// Get the XMPP bridge to check existing mappings
 	bridge, err := c.bridgeManager.GetBridge("xmpp")
 	if err != nil {
 		return &model.CommandResponse{
@@ -136,7 +136,7 @@ func (c *Handler) executeMapCommand(args *model.CommandArgs, fields []string) *m
 	}
 
 	// Check if channel is already mapped
-	existingMapping, err := bridge.GetChannelRoomMapping(channelID)
+	existingMapping, err := bridge.GetChannelMapping(channelID)
 	if err != nil {
 		return &model.CommandResponse{
 			ResponseType: model.CommandResponseTypeEphemeral,
@@ -151,8 +151,8 @@ func (c *Handler) executeMapCommand(args *model.CommandArgs, fields []string) *m
 		}
 	}
 
-	// Create the mapping
-	err = bridge.CreateChannelRoomMapping(channelID, roomJID)
+	// Create the mapping using BridgeManager
+	err = c.bridgeManager.OnChannelMappingCreated(channelID, "xmpp", roomJID)
 	if err != nil {
 		return &model.CommandResponse{
 			ResponseType: model.CommandResponseTypeEphemeral,
@@ -169,7 +169,7 @@ func (c *Handler) executeMapCommand(args *model.CommandArgs, fields []string) *m
 func (c *Handler) executeUnmapCommand(args *model.CommandArgs) *model.CommandResponse {
 	channelID := args.ChannelId
 
-	// Get the XMPP bridge
+	// Get the XMPP bridge to check existing mappings
 	bridge, err := c.bridgeManager.GetBridge("xmpp")
 	if err != nil {
 		return &model.CommandResponse{
@@ -179,7 +179,7 @@ func (c *Handler) executeUnmapCommand(args *model.CommandArgs) *model.CommandRes
 	}
 
 	// Check if channel is mapped
-	roomJID, err := bridge.GetChannelRoomMapping(channelID)
+	roomJID, err := bridge.GetChannelMapping(channelID)
 	if err != nil {
 		return &model.CommandResponse{
 			ResponseType: model.CommandResponseTypeEphemeral,
@@ -195,7 +195,7 @@ func (c *Handler) executeUnmapCommand(args *model.CommandArgs) *model.CommandRes
 	}
 
 	// Delete the mapping
-	err = bridge.DeleteChannelRoomMapping(channelID)
+	err = c.bridgeManager.OnChannelMappingDeleted(channelID, "xmpp")
 	if err != nil {
 		return &model.CommandResponse{
 			ResponseType: model.CommandResponseTypeEphemeral,
@@ -230,7 +230,7 @@ func (c *Handler) executeStatusCommand(args *model.CommandArgs) *model.CommandRe
 
 	// Check if current channel is mapped
 	channelID := args.ChannelId
-	roomJID, err := bridge.GetChannelRoomMapping(channelID)
+	roomJID, err := bridge.GetChannelMapping(channelID)
 
 	var mappingText string
 	if err != nil {

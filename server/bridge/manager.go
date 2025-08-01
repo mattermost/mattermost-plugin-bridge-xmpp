@@ -214,3 +214,99 @@ func (m *Manager) OnPluginConfigurationChange(config any) error {
 	m.logger.LogInfo("Configuration changes propagated to all bridges")
 	return nil
 }
+
+// OnChannelMappingCreated handles the creation of a channel mapping by calling the appropriate bridge
+func (m *Manager) OnChannelMappingCreated(channelID, bridgeName, bridgeRoomID string) error {
+	// Input validation
+	if channelID == "" {
+		return fmt.Errorf("channelID cannot be empty")
+	}
+	if bridgeName == "" {
+		return fmt.Errorf("bridgeName cannot be empty")
+	}
+	if bridgeRoomID == "" {
+		return fmt.Errorf("bridgeRoomID cannot be empty")
+	}
+
+	m.logger.LogDebug("Creating channel mapping", "channel_id", channelID, "bridge_name", bridgeName, "bridge_room_id", bridgeRoomID)
+
+	// Get the specific bridge
+	bridge, err := m.GetBridge(bridgeName)
+	if err != nil {
+		m.logger.LogError("Failed to get bridge", "bridge_name", bridgeName, "error", err)
+		return fmt.Errorf("failed to get bridge '%s': %w", bridgeName, err)
+	}
+
+	// Check if bridge is connected
+	if !bridge.IsConnected() {
+		return fmt.Errorf("bridge '%s' is not connected", bridgeName)
+	}
+
+	// Create the channel mapping on the receiving bridge
+	if err = bridge.CreateChannelMapping(channelID, bridgeRoomID); err != nil {
+		m.logger.LogError("Failed to create channel mapping", "channel_id", channelID, "bridge_name", bridgeName, "bridge_room_id", bridgeRoomID, "error", err)
+		return fmt.Errorf("failed to create channel mapping for bridge '%s': %w", bridgeName, err)
+	}
+
+	mattermostBridge, err := m.GetBridge("mattermost")
+	if err != nil {
+		m.logger.LogError("Failed to get Mattermost bridge", "error", err)
+		return fmt.Errorf("failed to get Mattermost bridge: %w", err)
+	}
+
+	// Create the channel mapping in the Mattermost bridge
+	if err = mattermostBridge.CreateChannelMapping(channelID, bridgeRoomID); err != nil {
+		m.logger.LogError("Failed to create channel mapping in Mattermost bridge", "channel_id", channelID, "bridge_name", bridgeName, "bridge_room_id", bridgeRoomID, "error", err)
+		return fmt.Errorf("failed to create channel mapping in Mattermost bridge: %w", err)
+	}
+
+	m.logger.LogInfo("Successfully created channel mapping", "channel_id", channelID, "bridge_name", bridgeName, "bridge_room_id", bridgeRoomID)
+	return nil
+}
+
+// OnChannelMappingDeleted handles the deletion of a channel mapping by calling the appropriate bridges
+func (m *Manager) OnChannelMappingDeleted(channelID, bridgeName string) error {
+	// Input validation
+	if channelID == "" {
+		return fmt.Errorf("channelID cannot be empty")
+	}
+	if bridgeName == "" {
+		return fmt.Errorf("bridgeName cannot be empty")
+	}
+
+	m.logger.LogDebug("Deleting channel mapping", "channel_id", channelID, "bridge_name", bridgeName)
+
+	// Get the specific bridge
+	bridge, err := m.GetBridge(bridgeName)
+	if err != nil {
+		m.logger.LogError("Failed to get bridge", "bridge_name", bridgeName, "error", err)
+		return fmt.Errorf("failed to get bridge '%s': %w", bridgeName, err)
+	}
+
+	// Check if bridge is connected
+	if !bridge.IsConnected() {
+		return fmt.Errorf("bridge '%s' is not connected", bridgeName)
+	}
+
+	// Delete the channel mapping from the specific bridge
+	if err = bridge.DeleteChannelMapping(channelID); err != nil {
+		m.logger.LogError("Failed to delete channel mapping", "channel_id", channelID, "bridge_name", bridgeName, "error", err)
+		return fmt.Errorf("failed to delete channel mapping for bridge '%s': %w", bridgeName, err)
+	}
+
+	// Also delete from Mattermost bridge to clean up reverse mappings
+	mattermostBridge, err := m.GetBridge("mattermost")
+	if err != nil {
+		m.logger.LogError("Failed to get Mattermost bridge", "error", err)
+		return fmt.Errorf("failed to get Mattermost bridge: %w", err)
+	}
+
+	// Delete the channel mapping from the Mattermost bridge
+	if err = mattermostBridge.DeleteChannelMapping(channelID); err != nil {
+		m.logger.LogError("Failed to delete channel mapping from Mattermost bridge", "channel_id", channelID, "bridge_name", bridgeName, "error", err)
+		return fmt.Errorf("failed to delete channel mapping from Mattermost bridge: %w", err)
+	}
+
+	m.logger.LogInfo("Successfully deleted channel mapping", "channel_id", channelID, "bridge_name", bridgeName)
+	return nil
+}

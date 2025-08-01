@@ -1,5 +1,16 @@
 package model
 
+type BridgeID string
+
+type UserState int
+
+const (
+	UserStateOnline UserState = iota
+	UserStateAway
+	UserStateBusy
+	UserStateOffline
+)
+
 type BridgeManager interface {
 	// RegisterBridge registers a bridge with the given name. Returns an error if the name is empty,
 	// the bridge is nil, or a bridge with the same name is already registered.
@@ -39,6 +50,12 @@ type BridgeManager interface {
 	// Returns an error if any bridge fails to update its configuration, but continues to
 	// attempt updating all bridges.
 	OnPluginConfigurationChange(config any) error
+
+	// OnChannelMappingCreated is called when a channel mapping is created.
+	OnChannelMappingCreated(channelID, bridgeName, bridgeRoomID string) error
+
+	// OnChannelMappingDeleted is called when a channel mapping is deleted.
+	OnChannelMappingDeleted(channelID, bridgeName string) error
 }
 
 type Bridge interface {
@@ -51,15 +68,38 @@ type Bridge interface {
 	// Stop stops the bridge
 	Stop() error
 
-	// CreateChannelRoomMapping creates a mapping between a Mattermost channel ID and an bridge room ID.
-	CreateChannelRoomMapping(channelID, roomJID string) error
+	// CreateChannelMapping creates a mapping between a Mattermost channel ID and an bridge room ID.
+	CreateChannelMapping(channelID, roomJID string) error
 
-	// GetChannelRoomMapping retrieves the bridge room ID for a given Mattermost channel ID.
-	GetChannelRoomMapping(channelID string) (string, error)
+	// GetChannelMapping retrieves the bridge room ID for a given Mattermost channel ID.
+	GetChannelMapping(channelID string) (string, error)
 
-	// DeleteChannelRoomMapping removes a mapping between a Mattermost channel ID and a bridge room ID.
-	DeleteChannelRoomMapping(channelID string) error
+	// DeleteChannelMapping removes a mapping between a Mattermost channel ID and a bridge room ID.
+	DeleteChannelMapping(channelID string) error
 
 	// IsConnected checks if the bridge is connected to the remote service.
 	IsConnected() bool
+}
+
+type BridgeUserManager interface {
+	// CreateUser creates a new user in the bridge system.
+	CreateUser(userID string, userData any) error
+
+	// GetUser retrieves user data for a given user ID.
+	GetUser(userID string) (any, error)
+
+	// UpdateUser updates user data for a given user ID.
+	UpdateUser(userID string, userData any) error
+
+	// DeleteUser removes a user from the bridge system.
+	DeleteUser(userID string) error
+
+	// ListUsers returns a list of all users in the bridge system.
+	ListUsers() ([]string, error)
+
+	// HasUser checks if a user exists in the bridge system.
+	HasUser(userID string) bool
+
+	// OnUserStateChange is called when a user's state changes (e.g., online, away, offline).
+	OnUserStateChange(userID string, state UserState) error
 }

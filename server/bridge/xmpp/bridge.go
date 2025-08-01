@@ -142,9 +142,6 @@ func (b *xmppBridge) Start() error {
 		return fmt.Errorf("bridge configuration not set")
 	}
 
-	// Print the configuration for debugging
-	b.logger.LogDebug("Bridge configuration", "config", config)
-
 	if !config.EnableSync {
 		b.logger.LogInfo("XMPP sync is disabled, bridge will not start")
 		return nil
@@ -378,19 +375,13 @@ func (b *xmppBridge) IsConnected() bool {
 	return b.connected.Load()
 }
 
-// CreateChannelRoomMapping creates a mapping between a Mattermost channel and XMPP room
-func (b *xmppBridge) CreateChannelRoomMapping(channelID, roomJID string) error {
+// CreateChannelMapping creates a mapping between a Mattermost channel and XMPP room
+func (b *xmppBridge) CreateChannelMapping(channelID, roomJID string) error {
 	if b.kvstore == nil {
 		return fmt.Errorf("KV store not initialized")
 	}
 
-	// Store forward and reverse mappings using bridge-agnostic keys
-	err := b.kvstore.Set(kvstore.BuildChannelMapKey("mattermost", channelID), []byte(roomJID))
-	if err != nil {
-		return fmt.Errorf("failed to store channel room mapping: %w", err)
-	}
-
-	err = b.kvstore.Set(kvstore.BuildChannelMapKey("xmpp", roomJID), []byte(channelID))
+	err := b.kvstore.Set(kvstore.BuildChannelMapKey("xmpp", roomJID), []byte(channelID))
 	if err != nil {
 		return fmt.Errorf("failed to store reverse room mapping: %w", err)
 	}
@@ -411,8 +402,8 @@ func (b *xmppBridge) CreateChannelRoomMapping(channelID, roomJID string) error {
 	return nil
 }
 
-// GetChannelRoomMapping gets the XMPP room JID for a Mattermost channel
-func (b *xmppBridge) GetChannelRoomMapping(channelID string) (string, error) {
+// GetChannelMapping gets the XMPP room JID for a Mattermost channel
+func (b *xmppBridge) GetChannelMapping(channelID string) (string, error) {
 	// Check cache first
 	b.mappingsMu.RLock()
 	roomJID, exists := b.channelMappings[channelID]
@@ -427,7 +418,7 @@ func (b *xmppBridge) GetChannelRoomMapping(channelID string) (string, error) {
 	}
 
 	// Check if we have a mapping in the KV store for this channel ID
-	roomJIDBytes, err := b.kvstore.Get(kvstore.BuildChannelMapKey("mattermost", channelID))
+	roomJIDBytes, err := b.kvstore.Get(kvstore.BuildChannelMapKey("xmpp", channelID))
 	if err != nil {
 		return "", nil // Unmapped channels are expected
 	}
@@ -442,25 +433,19 @@ func (b *xmppBridge) GetChannelRoomMapping(channelID string) (string, error) {
 	return roomJID, nil
 }
 
-// DeleteChannelRoomMapping removes a mapping between a Mattermost channel and XMPP room
-func (b *xmppBridge) DeleteChannelRoomMapping(channelID string) error {
+// DeleteChannelMapping removes a mapping between a Mattermost channel and XMPP room
+func (b *xmppBridge) DeleteChannelMapping(channelID string) error {
 	if b.kvstore == nil {
 		return fmt.Errorf("KV store not initialized")
 	}
 
 	// Get the room JID from the mapping before deleting
-	roomJID, err := b.GetChannelRoomMapping(channelID)
+	roomJID, err := b.GetChannelMapping(channelID)
 	if err != nil {
 		return fmt.Errorf("failed to get channel mapping: %w", err)
 	}
 	if roomJID == "" {
 		return fmt.Errorf("channel is not mapped to any room")
-	}
-
-	// Delete forward and reverse mappings from KV store
-	err = b.kvstore.Delete(kvstore.BuildChannelMapKey("mattermost", channelID))
-	if err != nil {
-		return fmt.Errorf("failed to delete channel room mapping: %w", err)
 	}
 
 	err = b.kvstore.Delete(kvstore.BuildChannelMapKey("xmpp", roomJID))

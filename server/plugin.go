@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/bridge"
+	mattermostbridge "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/bridge/mattermost"
 	xmppbridge "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/bridge/xmpp"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/command"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/config"
@@ -43,6 +44,10 @@ type Plugin struct {
 	// remoteID is the identifier returned by RegisterPluginForSharedChannels
 	remoteID string
 
+	// botUserID is the ID of the bot user created for this plugin
+	botUserID string
+
+	// backgroundJob is the scheduled job that runs periodically to perform background tasks.
 	backgroundJob *cluster.Job
 
 	// configurationLock synchronizes access to the configuration.
@@ -70,6 +75,12 @@ func (p *Plugin) OnActivate() error {
 	// Load configuration directly
 	cfg := p.getConfiguration()
 	p.logger.LogDebug("Loaded configuration in OnActivate", "config", cfg)
+
+	// Register the plugin for shared channels
+	if err := p.registerForSharedChannels(); err != nil {
+		p.logger.LogError("Failed to register for shared channels", "error", err)
+		return fmt.Errorf("failed to register for shared channels: %w", err)
+	}
 
 	// Initialize bridge manager
 	p.bridgeManager = bridge.NewManager(p.logger)
@@ -118,6 +129,10 @@ func (p *Plugin) OnDeactivate() error {
 		}
 	}
 
+	if err := p.API.UnregisterPluginForSharedChannels(manifest.Id); err != nil {
+		p.API.LogError("Failed to unregister plugin for shared channels", "err", err)
+	}
+
 	return nil
 }
 
@@ -143,18 +158,62 @@ func (p *Plugin) initXMPPClient() {
 
 func (p *Plugin) initBridges(cfg config.Configuration) error {
 	// Create and register XMPP bridge
-	bridge := xmppbridge.NewBridge(
+	xmppBridge := xmppbridge.NewBridge(
 		p.logger,
 		p.API,
 		p.kvstore,
 		&cfg,
 	)
 
-	if err := p.bridgeManager.RegisterBridge("xmpp", bridge); err != nil {
+	if err := p.bridgeManager.RegisterBridge("xmpp", xmppBridge); err != nil {
 		return fmt.Errorf("failed to register XMPP bridge: %w", err)
 	}
 
+	// Create and register Mattermost bridge
+	mattermostBridge := mattermostbridge.NewBridge(
+		p.logger,
+		p.API,
+		p.kvstore,
+		&cfg,
+	)
+
+	if err := p.bridgeManager.RegisterBridge("mattermost", mattermostBridge); err != nil {
+		return fmt.Errorf("failed to register Mattermost bridge: %w", err)
+	}
+
 	p.logger.LogInfo("Bridge instances created and registered successfully")
+	return nil
+}
+
+func (p *Plugin) registerForSharedChannels() error {
+	botUserID, err := p.API.EnsureBotUser(&model.Bot{
+		Username:    "mattermost-bridge",
+		DisplayName: "Mattermost Bridge",
+		Description: "Mattermost Bridge Bot",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to ensure bot user: %w", err)
+	}
+
+	p.botUserID = botUserID
+
+	opts := model.RegisterPluginOpts{
+		Displayname:  "XMPP-Bridge",
+		PluginID:     manifest.Id,
+		CreatorID:    botUserID,
+		AutoShareDMs: false,
+		AutoInvited:  false,
+	}
+
+	remoteID, appErr := p.API.RegisterPluginForSharedChannels(opts)
+	if appErr != nil {
+		return fmt.Errorf("failed to register plugin for shared channels: %w", appErr)
+	}
+
+	// Store the remote ID for use in sync operations
+	p.remoteID = remoteID
+
+	p.logger.LogInfo("Successfully registered plugin for shared channels", "remote_id", remoteID)
 	return nil
 }
 

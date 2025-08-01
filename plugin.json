@@ -6,7 +6,7 @@
   "support_url": "https://github.com/mattermost/mattermost-plugin-bridge-xmpp/issues",
   "icon_path": "assets/logo.png",
   "version": "",
-  "min_server_version": "6.2.1",
+  "min_server_version": "9.5.0",
   "server": {
     "executables": {
       "darwin-amd64": "server/dist/plugin-darwin-amd64",

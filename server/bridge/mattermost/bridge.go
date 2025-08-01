@@ -1,0 +1,257 @@
+package mattermost
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"sync/atomic"
+
+	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/config"
+	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
+	pluginModel "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
+	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/store/kvstore"
+	"github.com/mattermost/mattermost/server/public/plugin"
+)
+
+// mattermostBridge handles syncing messages between Mattermost instances
+type mattermostBridge struct {
+	logger  logger.Logger
+	api     plugin.API
+	kvstore kvstore.KVStore
+
+	// Connection management
+	connected atomic.Bool
+	ctx       context.Context
+	cancel    context.CancelFunc
+
+	// Current configuration
+	config   *config.Configuration
+	configMu sync.RWMutex
+
+	// Channel mappings cache
+	channelMappings map[string]string
+	mappingsMu      sync.RWMutex
+}
+
+// NewBridge creates a new Mattermost bridge
+func NewBridge(log logger.Logger, api plugin.API, kvstore kvstore.KVStore, cfg *config.Configuration) pluginModel.Bridge {
+	ctx, cancel := context.WithCancel(context.Background())
+	bridge := &mattermostBridge{
+		logger:          log,
+		api:             api,
+		kvstore:         kvstore,
+		ctx:             ctx,
+		cancel:          cancel,
+		channelMappings: make(map[string]string),
+		config:          cfg,
+	}
+
+	return bridge
+}
+
+// UpdateConfiguration updates the bridge configuration
+func (b *mattermostBridge) UpdateConfiguration(newConfig any) error {
+	cfg, ok := newConfig.(*config.Configuration)
+	if !ok {
+		return fmt.Errorf("invalid configuration type")
+	}
+
+	b.configMu.Lock()
+	oldConfig := b.config
+	b.config = cfg
+	b.configMu.Unlock()
+
+	// Log the configuration change
+	b.logger.LogInfo("Mattermost bridge configuration updated", "old_config", oldConfig, "new_config", cfg)
+
+	return nil
+}
+
+// Start initializes the bridge
+func (b *mattermostBridge) Start() error {
+	b.logger.LogDebug("Starting Mattermost bridge")
+
+	b.configMu.RLock()
+	config := b.config
+	b.configMu.RUnlock()
+
+	if config == nil {
+		return fmt.Errorf("bridge configuration not set")
+	}
+
+	// For Mattermost bridge, we're always "connected" since we're running within Mattermost
+	b.connected.Store(true)
+
+	// Load existing channel mappings
+	if err := b.loadChannelMappings(); err != nil {
+		b.logger.LogWarn("Failed to load some channel mappings", "error", err)
+	}
+
+	b.logger.LogInfo("Mattermost bridge started successfully")
+	return nil
+}
+
+// Stop shuts down the bridge
+func (b *mattermostBridge) Stop() error {
+	b.logger.LogInfo("Stopping Mattermost bridge")
+
+	if b.cancel != nil {
+		b.cancel()
+	}
+
+	b.connected.Store(false)
+	b.logger.LogInfo("Mattermost bridge stopped")
+	return nil
+}
+
+// loadChannelMappings loads existing channel mappings from KV store
+func (b *mattermostBridge) loadChannelMappings() error {
+	b.logger.LogDebug("Loading channel mappings for Mattermost bridge")
+
+	// Get all channel mappings from KV store for Mattermost bridge
+	mappings, err := b.getAllChannelMappings()
+	if err != nil {
+		return fmt.Errorf("failed to load channel mappings: %w", err)
+	}
+
+	if len(mappings) == 0 {
+		b.logger.LogInfo("No channel mappings found for Mattermost bridge")
+		return nil
+	}
+
+	b.logger.LogInfo("Found channel mappings for Mattermost bridge", "count", len(mappings))
+
+	// Update local cache
+	b.mappingsMu.Lock()
+	for channelID, roomID := range mappings {
+		b.channelMappings[channelID] = roomID
+	}
+	b.mappingsMu.Unlock()
+
+	return nil
+}
+
+// getAllChannelMappings retrieves all channel mappings from KV store for Mattermost bridge
+func (b *mattermostBridge) getAllChannelMappings() (map[string]string, error) {
+	if b.kvstore == nil {
+		return nil, fmt.Errorf("KV store not initialized")
+	}
+
+	mappings := make(map[string]string)
+
+	// Get all keys with the Mattermost bridge mapping prefix
+	mattermostPrefix := kvstore.KeyPrefixChannelMap + "mattermost_"
+	keys, err := b.kvstore.ListKeysWithPrefix(0, 1000, mattermostPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list Mattermost bridge mapping keys: %w", err)
+	}
+
+	// Load each mapping
+	for _, key := range keys {
+		channelIDBytes, err := b.kvstore.Get(key)
+		if err != nil {
+			b.logger.LogWarn("Failed to load mapping for key", "key", key, "error", err)
+			continue
+		}
+
+		// Extract room ID from the key
+		roomID := kvstore.ExtractIdentifierFromChannelMapKey(key, "mattermost")
+		if roomID == "" {
+			b.logger.LogWarn("Failed to extract room ID from key", "key", key)
+			continue
+		}
+
+		channelID := string(channelIDBytes)
+		mappings[channelID] = roomID
+	}
+
+	return mappings, nil
+}
+
+// IsConnected returns whether the bridge is connected
+func (b *mattermostBridge) IsConnected() bool {
+	// Mattermost bridge is always "connected" since it runs within Mattermost
+	return b.connected.Load()
+}
+
+// CreateChannelMapping creates a mapping between a Mattermost channel and another Mattermost room/channel
+func (b *mattermostBridge) CreateChannelMapping(channelID, roomID string) error {
+	if b.kvstore == nil {
+		return fmt.Errorf("KV store not initialized")
+	}
+
+	// Store forward and reverse mappings using bridge-agnostic keys
+	err := b.kvstore.Set(kvstore.BuildChannelMapKey("mattermost", channelID), []byte(roomID))
+	if err != nil {
+		return fmt.Errorf("failed to store channel room mapping: %w", err)
+	}
+
+	// Update local cache
+	b.mappingsMu.Lock()
+	b.channelMappings[channelID] = roomID
+	b.mappingsMu.Unlock()
+
+	b.logger.LogInfo("Created Mattermost channel room mapping", "channel_id", channelID, "room_id", roomID)
+	return nil
+}
+
+// GetChannelMapping gets the room ID for a Mattermost channel
+func (b *mattermostBridge) GetChannelMapping(channelID string) (string, error) {
+	// Check cache first
+	b.mappingsMu.RLock()
+	roomID, exists := b.channelMappings[channelID]
+	b.mappingsMu.RUnlock()
+
+	if exists {
+		return roomID, nil
+	}
+
+	if b.kvstore == nil {
+		return "", fmt.Errorf("KV store not initialized")
+	}
+
+	// Check if we have a mapping in the KV store for this channel ID
+	roomIDBytes, err := b.kvstore.Get(kvstore.BuildChannelMapKey("mattermost", channelID))
+	if err != nil {
+		return "", nil // Unmapped channels are expected
+	}
+
+	roomID = string(roomIDBytes)
+
+	// Update cache
+	b.mappingsMu.Lock()
+	b.channelMappings[channelID] = roomID
+	b.mappingsMu.Unlock()
+
+	return roomID, nil
+}
+
+// DeleteChannelMapping removes a mapping between a Mattermost channel and room
+func (b *mattermostBridge) DeleteChannelMapping(channelID string) error {
+	if b.kvstore == nil {
+		return fmt.Errorf("KV store not initialized")
+	}
+
+	// Get the room ID from the mapping before deleting
+	roomID, err := b.GetChannelMapping(channelID)
+	if err != nil {
+		return fmt.Errorf("failed to get channel mapping: %w", err)
+	}
+	if roomID == "" {
+		return fmt.Errorf("channel is not mapped to any room")
+	}
+
+	// Delete forward and reverse mappings from KV store
+	err = b.kvstore.Delete(kvstore.BuildChannelMapKey("mattermost", channelID))
+	if err != nil {
+		return fmt.Errorf("failed to delete channel room mapping: %w", err)
+	}
+
+	// Remove from local cache
+	b.mappingsMu.Lock()
+	delete(b.channelMappings, channelID)
+	b.mappingsMu.Unlock()
+
+	b.logger.LogInfo("Deleted Mattermost channel room mapping", "channel_id", channelID, "room_id", roomID)
+	return nil
+}
