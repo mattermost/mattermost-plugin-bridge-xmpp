@@ -83,7 +83,7 @@ func (p *Plugin) OnActivate() error {
 	}
 
 	// Initialize bridge manager
-	p.bridgeManager = bridge.NewManager(p.logger)
+	p.bridgeManager = bridge.NewManager(p.logger, p.API, p.remoteID)
 
 	// Initialize and register bridges with current configuration
 	if err := p.initBridges(*cfg); err != nil {
@@ -202,7 +202,7 @@ func (p *Plugin) registerForSharedChannels() error {
 		PluginID:     manifest.Id,
 		CreatorID:    botUserID,
 		AutoShareDMs: false,
-		AutoInvited:  false,
+		AutoInvited:  true,
 	}
 
 	remoteID, appErr := p.API.RegisterPluginForSharedChannels(opts)

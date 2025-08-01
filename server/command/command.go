@@ -152,7 +152,15 @@ func (c *Handler) executeMapCommand(args *model.CommandArgs, fields []string) *m
 	}
 
 	// Create the mapping using BridgeManager
-	err = c.bridgeManager.OnChannelMappingCreated(channelID, "xmpp", roomJID)
+	mappingReq := pluginModel.ChannelMappingRequest{
+		ChannelID:    channelID,
+		BridgeName:   "xmpp",
+		BridgeRoomID: roomJID,
+		UserID:       args.UserId,
+		TeamID:       args.TeamId,
+	}
+	
+	err = c.bridgeManager.OnChannelMappingCreated(mappingReq)
 	if err != nil {
 		return &model.CommandResponse{
 			ResponseType: model.CommandResponseTypeEphemeral,
@@ -195,7 +203,14 @@ func (c *Handler) executeUnmapCommand(args *model.CommandArgs) *model.CommandRes
 	}
 
 	// Delete the mapping
-	err = c.bridgeManager.OnChannelMappingDeleted(channelID, "xmpp")
+	deleteReq := pluginModel.ChannelMappingDeleteRequest{
+		ChannelID:  channelID,
+		BridgeName: "xmpp",
+		UserID:     args.UserId,
+		TeamID:     args.TeamId,
+	}
+	
+	err = c.bridgeManager.OnChannelMappingDeleted(deleteReq)
 	if err != nil {
 		return &model.CommandResponse{
 			ResponseType: model.CommandResponseTypeEphemeral,

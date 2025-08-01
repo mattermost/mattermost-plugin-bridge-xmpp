@@ -1,5 +1,7 @@
 package model
 
+import "fmt"
+
 type BridgeID string
 
 type UserState int
@@ -10,6 +12,60 @@ const (
 	UserStateBusy
 	UserStateOffline
 )
+
+// ChannelMappingRequest contains information needed to create a channel mapping
+type ChannelMappingRequest struct {
+	ChannelID    string // Mattermost channel ID
+	BridgeName   string // Name of the bridge (e.g., "xmpp")
+	BridgeRoomID string // Remote room/channel ID (e.g., JID for XMPP)
+	UserID       string // ID of user who triggered the mapping creation
+	TeamID       string // Team ID where the channel belongs
+}
+
+// Validate checks if all required fields are present and valid
+func (r ChannelMappingRequest) Validate() error {
+	if r.ChannelID == "" {
+		return fmt.Errorf("channelID cannot be empty")
+	}
+	if r.BridgeName == "" {
+		return fmt.Errorf("bridgeName cannot be empty")
+	}
+	if r.BridgeRoomID == "" {
+		return fmt.Errorf("bridgeRoomID cannot be empty")
+	}
+	if r.UserID == "" {
+		return fmt.Errorf("userID cannot be empty")
+	}
+	if r.TeamID == "" {
+		return fmt.Errorf("teamID cannot be empty")
+	}
+	return nil
+}
+
+// ChannelMappingDeleteRequest contains information needed to delete a channel mapping
+type ChannelMappingDeleteRequest struct {
+	ChannelID  string // Mattermost channel ID
+	BridgeName string // Name of the bridge (e.g., "xmpp")
+	UserID     string // ID of user who triggered the mapping deletion
+	TeamID     string // Team ID where the channel belongs
+}
+
+// Validate checks if all required fields are present and valid
+func (r ChannelMappingDeleteRequest) Validate() error {
+	if r.ChannelID == "" {
+		return fmt.Errorf("channelID cannot be empty")
+	}
+	if r.BridgeName == "" {
+		return fmt.Errorf("bridgeName cannot be empty")
+	}
+	if r.UserID == "" {
+		return fmt.Errorf("userID cannot be empty")
+	}
+	if r.TeamID == "" {
+		return fmt.Errorf("teamID cannot be empty")
+	}
+	return nil
+}
 
 type BridgeManager interface {
 	// RegisterBridge registers a bridge with the given name. Returns an error if the name is empty,
@@ -52,10 +108,10 @@ type BridgeManager interface {
 	OnPluginConfigurationChange(config any) error
 
 	// OnChannelMappingCreated is called when a channel mapping is created.
-	OnChannelMappingCreated(channelID, bridgeName, bridgeRoomID string) error
+	OnChannelMappingCreated(req ChannelMappingRequest) error
 
 	// OnChannelMappingDeleted is called when a channel mapping is deleted.
-	OnChannelMappingDeleted(channelID, bridgeName string) error
+	OnChannelMappingDeleted(req ChannelMappingDeleteRequest) error
 }
 
 type Bridge interface {

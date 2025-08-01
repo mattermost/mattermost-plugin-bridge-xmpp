@@ -6,24 +6,33 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
+	mmModel "github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin"
 )
 
 // Manager manages multiple bridge instances
 type Manager struct {
-	bridges map[string]model.Bridge
-	mu      sync.RWMutex
-	logger  logger.Logger
+	bridges  map[string]model.Bridge
+	mu       sync.RWMutex
+	logger   logger.Logger
+	api      plugin.API
+	remoteID string
 }
 
 // NewManager creates a new bridge manager
-func NewManager(logger logger.Logger) model.BridgeManager {
+func NewManager(logger logger.Logger, api plugin.API, remoteID string) model.BridgeManager {
 	if logger == nil {
 		panic("logger cannot be nil")
 	}
+	if api == nil {
+		panic("plugin API cannot be nil")
+	}
 
 	return &Manager{
-		bridges: make(map[string]model.Bridge),
-		logger:  logger,
+		bridges:  make(map[string]model.Bridge),
+		logger:   logger,
+		api:      api,
+		remoteID: remoteID,
 	}
 }
 
@@ -216,36 +225,30 @@ func (m *Manager) OnPluginConfigurationChange(config any) error {
 }
 
 // OnChannelMappingCreated handles the creation of a channel mapping by calling the appropriate bridge
-func (m *Manager) OnChannelMappingCreated(channelID, bridgeName, bridgeRoomID string) error {
-	// Input validation
-	if channelID == "" {
-		return fmt.Errorf("channelID cannot be empty")
-	}
-	if bridgeName == "" {
-		return fmt.Errorf("bridgeName cannot be empty")
-	}
-	if bridgeRoomID == "" {
-		return fmt.Errorf("bridgeRoomID cannot be empty")
+func (m *Manager) OnChannelMappingCreated(req model.ChannelMappingRequest) error {
+	// Validate request
+	if err := req.Validate(); err != nil {
+		return fmt.Errorf("invalid mapping request: %w", err)
 	}
 
-	m.logger.LogDebug("Creating channel mapping", "channel_id", channelID, "bridge_name", bridgeName, "bridge_room_id", bridgeRoomID)
+	m.logger.LogDebug("Creating channel mapping", "channel_id", req.ChannelID, "bridge_name", req.BridgeName, "bridge_room_id", req.BridgeRoomID, "user_id", req.UserID, "team_id", req.TeamID)
 
 	// Get the specific bridge
-	bridge, err := m.GetBridge(bridgeName)
+	bridge, err := m.GetBridge(req.BridgeName)
 	if err != nil {
-		m.logger.LogError("Failed to get bridge", "bridge_name", bridgeName, "error", err)
-		return fmt.Errorf("failed to get bridge '%s': %w", bridgeName, err)
+		m.logger.LogError("Failed to get bridge", "bridge_name", req.BridgeName, "error", err)
+		return fmt.Errorf("failed to get bridge '%s': %w", req.BridgeName, err)
 	}
 
 	// Check if bridge is connected
 	if !bridge.IsConnected() {
-		return fmt.Errorf("bridge '%s' is not connected", bridgeName)
+		return fmt.Errorf("bridge '%s' is not connected", req.BridgeName)
 	}
 
 	// Create the channel mapping on the receiving bridge
-	if err = bridge.CreateChannelMapping(channelID, bridgeRoomID); err != nil {
-		m.logger.LogError("Failed to create channel mapping", "channel_id", channelID, "bridge_name", bridgeName, "bridge_room_id", bridgeRoomID, "error", err)
-		return fmt.Errorf("failed to create channel mapping for bridge '%s': %w", bridgeName, err)
+	if err = bridge.CreateChannelMapping(req.ChannelID, req.BridgeRoomID); err != nil {
+		m.logger.LogError("Failed to create channel mapping", "channel_id", req.ChannelID, "bridge_name", req.BridgeName, "bridge_room_id", req.BridgeRoomID, "error", err)
+		return fmt.Errorf("failed to create channel mapping for bridge '%s': %w", req.BridgeName, err)
 	}
 
 	mattermostBridge, err := m.GetBridge("mattermost")
@@ -255,43 +258,47 @@ func (m *Manager) OnChannelMappingCreated(channelID, bridgeName, bridgeRoomID st
 	}
 
 	// Create the channel mapping in the Mattermost bridge
-	if err = mattermostBridge.CreateChannelMapping(channelID, bridgeRoomID); err != nil {
-		m.logger.LogError("Failed to create channel mapping in Mattermost bridge", "channel_id", channelID, "bridge_name", bridgeName, "bridge_room_id", bridgeRoomID, "error", err)
+	if err = mattermostBridge.CreateChannelMapping(req.ChannelID, req.BridgeRoomID); err != nil {
+		m.logger.LogError("Failed to create channel mapping in Mattermost bridge", "channel_id", req.ChannelID, "bridge_name", req.BridgeName, "bridge_room_id", req.BridgeRoomID, "error", err)
 		return fmt.Errorf("failed to create channel mapping in Mattermost bridge: %w", err)
 	}
 
-	m.logger.LogInfo("Successfully created channel mapping", "channel_id", channelID, "bridge_name", bridgeName, "bridge_room_id", bridgeRoomID)
+	// Share the channel using Mattermost's shared channels API
+	if err = m.shareChannel(req); err != nil {
+		m.logger.LogError("Failed to share channel", "channel_id", req.ChannelID, "bridge_room_id", req.BridgeRoomID, "error", err)
+		// Don't fail the entire operation if sharing fails, but log the error
+		m.logger.LogWarn("Channel mapping created but sharing failed - channel may not sync properly")
+	}
+
+	m.logger.LogInfo("Successfully created channel mapping", "channel_id", req.ChannelID, "bridge_name", req.BridgeName, "bridge_room_id", req.BridgeRoomID)
 	return nil
 }
 
 // OnChannelMappingDeleted handles the deletion of a channel mapping by calling the appropriate bridges
-func (m *Manager) OnChannelMappingDeleted(channelID, bridgeName string) error {
-	// Input validation
-	if channelID == "" {
-		return fmt.Errorf("channelID cannot be empty")
-	}
-	if bridgeName == "" {
-		return fmt.Errorf("bridgeName cannot be empty")
+func (m *Manager) OnChannelMappingDeleted(req model.ChannelMappingDeleteRequest) error {
+	// Validate request
+	if err := req.Validate(); err != nil {
+		return fmt.Errorf("invalid delete request: %w", err)
 	}
 
-	m.logger.LogDebug("Deleting channel mapping", "channel_id", channelID, "bridge_name", bridgeName)
+	m.logger.LogDebug("Deleting channel mapping", "channel_id", req.ChannelID, "bridge_name", req.BridgeName, "user_id", req.UserID, "team_id", req.TeamID)
 
 	// Get the specific bridge
-	bridge, err := m.GetBridge(bridgeName)
+	bridge, err := m.GetBridge(req.BridgeName)
 	if err != nil {
-		m.logger.LogError("Failed to get bridge", "bridge_name", bridgeName, "error", err)
-		return fmt.Errorf("failed to get bridge '%s': %w", bridgeName, err)
+		m.logger.LogError("Failed to get bridge", "bridge_name", req.BridgeName, "error", err)
+		return fmt.Errorf("failed to get bridge '%s': %w", req.BridgeName, err)
 	}
 
 	// Check if bridge is connected
 	if !bridge.IsConnected() {
-		return fmt.Errorf("bridge '%s' is not connected", bridgeName)
+		return fmt.Errorf("bridge '%s' is not connected", req.BridgeName)
 	}
 
 	// Delete the channel mapping from the specific bridge
-	if err = bridge.DeleteChannelMapping(channelID); err != nil {
-		m.logger.LogError("Failed to delete channel mapping", "channel_id", channelID, "bridge_name", bridgeName, "error", err)
-		return fmt.Errorf("failed to delete channel mapping for bridge '%s': %w", bridgeName, err)
+	if err = bridge.DeleteChannelMapping(req.ChannelID); err != nil {
+		m.logger.LogError("Failed to delete channel mapping", "channel_id", req.ChannelID, "bridge_name", req.BridgeName, "error", err)
+		return fmt.Errorf("failed to delete channel mapping for bridge '%s': %w", req.BridgeName, err)
 	}
 
 	// Also delete from Mattermost bridge to clean up reverse mappings
@@ -302,11 +309,65 @@ func (m *Manager) OnChannelMappingDeleted(channelID, bridgeName string) error {
 	}
 
 	// Delete the channel mapping from the Mattermost bridge
-	if err = mattermostBridge.DeleteChannelMapping(channelID); err != nil {
-		m.logger.LogError("Failed to delete channel mapping from Mattermost bridge", "channel_id", channelID, "bridge_name", bridgeName, "error", err)
+	if err = mattermostBridge.DeleteChannelMapping(req.ChannelID); err != nil {
+		m.logger.LogError("Failed to delete channel mapping from Mattermost bridge", "channel_id", req.ChannelID, "bridge_name", req.BridgeName, "error", err)
 		return fmt.Errorf("failed to delete channel mapping from Mattermost bridge: %w", err)
 	}
 
-	m.logger.LogInfo("Successfully deleted channel mapping", "channel_id", channelID, "bridge_name", bridgeName)
+	// Unshare the channel using Mattermost's shared channels API
+	if err = m.unshareChannel(req.ChannelID); err != nil {
+		m.logger.LogError("Failed to unshare channel", "channel_id", req.ChannelID, "error", err)
+		// Don't fail the entire operation if unsharing fails, but log the error
+		m.logger.LogWarn("Channel mapping deleted but unsharing failed - channel may still appear as shared")
+	}
+
+	m.logger.LogInfo("Successfully deleted channel mapping", "channel_id", req.ChannelID, "bridge_name", req.BridgeName)
+	return nil
+}
+
+// shareChannel creates a shared channel configuration using the Mattermost API
+func (m *Manager) shareChannel(req model.ChannelMappingRequest) error {
+	if m.remoteID == "" {
+		return fmt.Errorf("remote ID not set - plugin not registered for shared channels")
+	}
+
+	// Create SharedChannel configuration
+	sharedChannel := &mmModel.SharedChannel{
+		ChannelId:        req.ChannelID,
+		TeamId:           req.TeamID,
+		Home:             true,
+		ReadOnly:         false,
+		ShareName:        model.SanitizeShareName(fmt.Sprintf("bridge-%s", req.BridgeRoomID)),
+		ShareDisplayName: fmt.Sprintf("Bridge: %s", req.BridgeRoomID),
+		SharePurpose:     fmt.Sprintf("Shared channel bridged to %s", req.BridgeRoomID),
+		ShareHeader:      "test header",
+		CreatorId:        req.UserID,
+		RemoteId:         m.remoteID,
+	}
+
+	// Share the channel
+	sharedChannel, err := m.api.ShareChannel(sharedChannel)
+	if err != nil {
+		return fmt.Errorf("failed to share channel via API: %w", err)
+	}
+
+	m.logger.LogInfo("Successfully shared channel", "channel_id", req.ChannelID, "shared_channel_id", sharedChannel.ChannelId)
+	return nil
+}
+
+// unshareChannel removes shared channel configuration using the Mattermost API
+func (m *Manager) unshareChannel(channelID string) error {
+	// Unshare the channel
+	unshared, err := m.api.UnshareChannel(channelID)
+	if err != nil {
+		return fmt.Errorf("failed to unshare channel via API: %w", err)
+	}
+
+	if !unshared {
+		m.logger.LogWarn("Channel was not shared or already unshared", "channel_id", channelID)
+	} else {
+		m.logger.LogInfo("Successfully unshared channel", "channel_id", channelID)
+	}
+
 	return nil
 }
