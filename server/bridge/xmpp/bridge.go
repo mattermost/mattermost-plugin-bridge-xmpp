@@ -272,28 +272,30 @@ func (b *xmppBridge) getAllChannelMappings() (map[string]string, error) {
 
 	mappings := make(map[string]string)
 
-	// Get all keys with the channel mapping prefix
-	keys, err := b.kvstore.ListKeysWithPrefix(0, 1000, kvstore.KeyPrefixChannelMapping)
+	// Get all keys with the XMPP room mapping prefix to find all mapped rooms
+	xmppPrefix := kvstore.KeyPrefixChannelMap + "xmpp_"
+	keys, err := b.kvstore.ListKeysWithPrefix(0, 1000, xmppPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list channel mapping keys: %w", err)
+		return nil, fmt.Errorf("failed to list XMPP room mapping keys: %w", err)
 	}
 
 	// Load each mapping
 	for _, key := range keys {
-		roomJIDBytes, err := b.kvstore.Get(key)
+		channelIDBytes, err := b.kvstore.Get(key)
 		if err != nil {
 			b.logger.LogWarn("Failed to load mapping for key", "key", key, "error", err)
 			continue
 		}
 
-		// Extract channel ID from the key
-		channelID := kvstore.ExtractChannelIDFromKey(key)
-		if channelID == "" {
-			b.logger.LogWarn("Failed to extract channel ID from key", "key", key)
+		// Extract room JID from the key
+		roomJID := kvstore.ExtractIdentifierFromChannelMapKey(key, "xmpp")
+		if roomJID == "" {
+			b.logger.LogWarn("Failed to extract room JID from key", "key", key)
 			continue
 		}
 
-		mappings[channelID] = string(roomJIDBytes)
+		channelID := string(channelIDBytes)
+		mappings[channelID] = roomJID
 	}
 
 	return mappings, nil
@@ -382,13 +384,13 @@ func (b *xmppBridge) CreateChannelRoomMapping(channelID, roomJID string) error {
 		return fmt.Errorf("KV store not initialized")
 	}
 
-	// Store forward and reverse mappings
-	err := b.kvstore.Set(kvstore.BuildChannelMappingKey(channelID), []byte(roomJID))
+	// Store forward and reverse mappings using bridge-agnostic keys
+	err := b.kvstore.Set(kvstore.BuildChannelMapKey("mattermost", channelID), []byte(roomJID))
 	if err != nil {
 		return fmt.Errorf("failed to store channel room mapping: %w", err)
 	}
 
-	err = b.kvstore.Set(kvstore.BuildRoomMappingKey(roomJID), []byte(channelID))
+	err = b.kvstore.Set(kvstore.BuildChannelMapKey("xmpp", roomJID), []byte(channelID))
 	if err != nil {
 		return fmt.Errorf("failed to store reverse room mapping: %w", err)
 	}
@@ -424,8 +426,8 @@ func (b *xmppBridge) GetChannelRoomMapping(channelID string) (string, error) {
 		return "", fmt.Errorf("KV store not initialized")
 	}
 
-	// Load from KV store
-	roomJIDBytes, err := b.kvstore.Get(kvstore.BuildChannelMappingKey(channelID))
+	// Check if we have a mapping in the KV store for this channel ID
+	roomJIDBytes, err := b.kvstore.Get(kvstore.BuildChannelMapKey("mattermost", channelID))
 	if err != nil {
 		return "", nil // Unmapped channels are expected
 	}

@@ -1,5 +1,7 @@
 package kvstore
 
+import "strings"
+
 // KV Store key prefixes and constants
 // This file centralizes all KV store key patterns used throughout the plugin
 // to ensure consistency and avoid key conflicts.
@@ -12,10 +14,8 @@ const (
 	// KeyPrefixMattermostUser is the prefix for Mattermost user ID -> XMPP user ID mappings
 	KeyPrefixMattermostUser = "mattermost_user_"
 
-	// KeyPrefixChannelMapping is the prefix for Mattermost channel ID -> XMPP room mappings
-	KeyPrefixChannelMapping = "channel_mapping_"
-	// KeyPrefixRoomMapping is the prefix for XMPP room identifier -> Mattermost channel ID mappings
-	KeyPrefixRoomMapping = "xmpp_room_mapping_"
+	// KeyPrefixChannelMap is the prefix for bridge-agnostic channel mappings
+	KeyPrefixChannelMap = "channel_map_"
 
 	// KeyPrefixGhostUser is the prefix for Mattermost user ID -> XMPP ghost user ID cache
 	KeyPrefixGhostUser = "ghost_user_"
@@ -30,9 +30,9 @@ const (
 	// KeyStoreVersion is the key for tracking the current KV store schema version
 	KeyStoreVersion = "kv_store_version"
 
-	// KeyPrefixLegacyDMMapping was the old prefix for DM mappings (migrated to channel_mapping_)
+	// KeyPrefixLegacyDMMapping was the old prefix for DM mappings
 	KeyPrefixLegacyDMMapping = "dm_mapping_"
-	// KeyPrefixLegacyXMPPDMMapping was the old prefix for XMPP DM mappings (migrated to room_mapping_)
+	// KeyPrefixLegacyXMPPDMMapping was the old prefix for XMPP DM mappings
 	KeyPrefixLegacyXMPPDMMapping = "xmpp_dm_mapping_"
 )
 
@@ -48,14 +48,9 @@ func BuildMattermostUserKey(mattermostUserID string) string {
 	return KeyPrefixMattermostUser + mattermostUserID
 }
 
-// BuildChannelMappingKey creates a key for channel -> room mapping
-func BuildChannelMappingKey(channelID string) string {
-	return KeyPrefixChannelMapping + channelID
-}
-
-// BuildRoomMappingKey creates a key for room -> channel mapping
-func BuildRoomMappingKey(roomIdentifier string) string {
-	return KeyPrefixRoomMapping + roomIdentifier
+// BuildChannelMapKey creates a bridge-agnostic key for channel mappings
+func BuildChannelMapKey(bridgeName, identifier string) string {
+	return KeyPrefixChannelMap + bridgeName + "_" + identifier
 }
 
 // BuildGhostUserKey creates a key for ghost user cache
@@ -78,10 +73,14 @@ func BuildXMPPReactionKey(reactionEventID string) string {
 	return KeyPrefixXMPPReaction + reactionEventID
 }
 
-// ExtractChannelIDFromKey extracts the channel ID from a channel mapping key
-func ExtractChannelIDFromKey(key string) string {
-	if len(key) <= len(KeyPrefixChannelMapping) {
+// ExtractIdentifierFromChannelMapKey extracts the identifier from a bridge-agnostic channel map key
+func ExtractIdentifierFromChannelMapKey(key, bridgeName string) string {
+	expectedPrefix := KeyPrefixChannelMap + bridgeName + "_"
+	if len(key) <= len(expectedPrefix) {
 		return ""
 	}
-	return key[len(KeyPrefixChannelMapping):]
+	if !strings.HasPrefix(key, expectedPrefix) {
+		return ""
+	}
+	return key[len(expectedPrefix):]
 }
