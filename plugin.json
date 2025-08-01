@@ -1,5 +1,5 @@
 {
-  "id": "com.mattermost.bridge-xmpp",
+  "id": "com.mattermost.plugin-bridge-xmpp",
   "name": "Mattermost Bridge for XMPP",
   "description": "This plugin provides a bridge connecting Mattermost and XMPP servers.",
   "homepage_url": "https://github.com/mattermost/mattermost-plugin-bridge-xmpp",
