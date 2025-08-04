@@ -245,6 +245,39 @@ func (m *Manager) OnChannelMappingCreated(req model.ChannelMappingRequest) error
 		return fmt.Errorf("bridge '%s' is not connected", req.BridgeName)
 	}
 
+	// NEW: Check if room already mapped to another channel
+	existingChannelID, err := bridge.GetRoomMapping(req.BridgeRoomID)
+	if err != nil {
+		m.logger.LogError("Failed to check room mapping", "bridge_room_id", req.BridgeRoomID, "error", err)
+		return fmt.Errorf("failed to check room mapping: %w", err)
+	}
+	if existingChannelID != "" {
+		m.logger.LogWarn("Room already mapped to another channel", 
+			"bridge_room_id", req.BridgeRoomID, 
+			"existing_channel_id", existingChannelID, 
+			"requested_channel_id", req.ChannelID)
+		return fmt.Errorf("room '%s' is already mapped to channel '%s'", req.BridgeRoomID, existingChannelID)
+	}
+
+	// NEW: Check if room exists on target bridge
+	roomExists, err := bridge.RoomExists(req.BridgeRoomID)
+	if err != nil {
+		m.logger.LogError("Failed to check room existence", "bridge_room_id", req.BridgeRoomID, "error", err)
+		return fmt.Errorf("failed to check room existence: %w", err)
+	}
+	if !roomExists {
+		m.logger.LogWarn("Room does not exist on bridge", 
+			"bridge_room_id", req.BridgeRoomID, 
+			"bridge_name", req.BridgeName)
+		return fmt.Errorf("room '%s' does not exist on %s bridge", req.BridgeRoomID, req.BridgeName)
+	}
+
+	m.logger.LogDebug("Room validation passed", 
+		"bridge_room_id", req.BridgeRoomID, 
+		"bridge_name", req.BridgeName,
+		"room_exists", roomExists,
+		"already_mapped", false)
+
 	// Create the channel mapping on the receiving bridge
 	if err = bridge.CreateChannelMapping(req.ChannelID, req.BridgeRoomID); err != nil {
 		m.logger.LogError("Failed to create channel mapping", "channel_id", req.ChannelID, "bridge_name", req.BridgeName, "bridge_room_id", req.BridgeRoomID, "error", err)

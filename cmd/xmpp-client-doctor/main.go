@@ -28,6 +28,7 @@ type Config struct {
 	TestRoom           string
 	TestMUC            bool
 	TestDirectMessage  bool
+	TestRoomExists     bool
 	Verbose            bool
 	InsecureSkipVerify bool
 }
@@ -43,14 +44,15 @@ func main() {
 	flag.StringVar(&config.TestRoom, "test-room", defaultTestRoom, "MUC room JID for testing")
 	flag.BoolVar(&config.TestMUC, "test-muc", true, "Enable MUC room testing (join/wait/leave)")
 	flag.BoolVar(&config.TestDirectMessage, "test-dm", true, "Enable direct message testing (send message to admin user)")
+	flag.BoolVar(&config.TestRoomExists, "test-room-exists", true, "Enable room existence testing using disco#info")
 	flag.BoolVar(&config.Verbose, "verbose", true, "Enable verbose logging")
 	flag.BoolVar(&config.InsecureSkipVerify, "insecure-skip-verify", true, "Skip TLS certificate verification (for development)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "xmpp-client-doctor - Test XMPP client connectivity and MUC operations\n\n")
 		fmt.Fprintf(os.Stderr, "This tool tests the XMPP client implementation by connecting to an XMPP server,\n")
-		fmt.Fprintf(os.Stderr, "performing connection tests, optionally testing MUC room operations and direct messages,\n")
-		fmt.Fprintf(os.Stderr, "and then disconnecting gracefully.\n\n")
+		fmt.Fprintf(os.Stderr, "performing connection tests, room existence checks, optionally testing MUC room operations\n")
+		fmt.Fprintf(os.Stderr, "and direct messages, and then disconnecting gracefully.\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n")
 		fmt.Fprintf(os.Stderr, "  %s [flags]\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Examples:\n")
@@ -81,6 +83,9 @@ func main() {
 		if config.TestDirectMessage {
 			log.Printf("  Test Direct Messages: enabled")
 		}
+		if config.TestRoomExists {
+			log.Printf("  Test Room Existence: enabled")
+		}
 	}
 
 	// Test the XMPP client
@@ -98,6 +103,9 @@ func main() {
 		if config.TestDirectMessage {
 			fmt.Println("✅ XMPP direct message test passed!")
 		}
+		if config.TestRoomExists {
+			fmt.Println("✅ XMPP room existence test passed!")
+		}
 	}
 }
 
@@ -105,6 +113,9 @@ func testXMPPClient(config *Config) error {
 	if config.Verbose {
 		log.Printf("Creating XMPP client...")
 	}
+
+	// Create a simple logger for the XMPP client
+	doctorLogger := &SimpleLogger{verbose: config.Verbose}
 
 	// Create XMPP client with optional TLS configuration
 	var client *xmpp.Client
@@ -122,6 +133,7 @@ func testXMPPClient(config *Config) error {
 			config.Resource,
 			"doctor-remote-id",
 			tlsConfig,
+			doctorLogger,
 		)
 	} else {
 		client = xmpp.NewClient(
@@ -130,6 +142,7 @@ func testXMPPClient(config *Config) error {
 			config.Password,
 			config.Resource,
 			"doctor-remote-id",
+			doctorLogger,
 		)
 	}
 
@@ -164,6 +177,7 @@ func testXMPPClient(config *Config) error {
 
 	var mucDuration time.Duration
 	var dmDuration time.Duration
+	var roomExistsDuration time.Duration
 	
 	// Test MUC operations if requested
 	if config.TestMUC {
@@ -183,6 +197,16 @@ func testXMPPClient(config *Config) error {
 			return fmt.Errorf("direct message test failed: %w", err)
 		}
 		dmDuration = time.Since(start)
+	}
+
+	// Test room existence if requested
+	if config.TestRoomExists {
+		start = time.Now()
+		err = testRoomExists(client, config)
+		if err != nil {
+			return fmt.Errorf("room existence test failed: %w", err)
+		}
+		roomExistsDuration = time.Since(start)
 	}
 
 	if config.Verbose {
@@ -208,6 +232,9 @@ func testXMPPClient(config *Config) error {
 		if config.TestDirectMessage {
 			log.Printf("  Direct message time: %v", dmDuration)
 		}
+		if config.TestRoomExists {
+			log.Printf("  Room existence check time: %v", roomExistsDuration)
+		}
 		log.Printf("  Disconnect time: %v", disconnectDuration)
 		totalTime := connectDuration + pingDuration + disconnectDuration
 		if config.TestMUC {
@@ -215,6 +242,9 @@ func testXMPPClient(config *Config) error {
 		}
 		if config.TestDirectMessage {
 			totalTime += dmDuration
+		}
+		if config.TestRoomExists {
+			totalTime += roomExistsDuration
 		}
 		log.Printf("  Total time: %v", totalTime)
 	}
@@ -225,12 +255,33 @@ func testXMPPClient(config *Config) error {
 func testMUCOperations(client *xmpp.Client, config *Config) error {
 	if config.Verbose {
 		log.Printf("Testing MUC operations with room: %s", config.TestRoom)
-		log.Printf("Attempting to join MUC room...")
+		log.Printf("First checking if room exists...")
+	}
+
+	// Check if room exists before attempting to join
+	start := time.Now()
+	exists, err := client.CheckRoomExists(config.TestRoom)
+	if err != nil {
+		return fmt.Errorf("failed to check room existence for %s: %w", config.TestRoom, err)
+	}
+	checkDuration := time.Since(start)
+
+	if config.Verbose {
+		log.Printf("✅ Room existence check completed in %v", checkDuration)
+		log.Printf("Room %s exists: %t", config.TestRoom, exists)
+	}
+
+	if !exists {
+		return fmt.Errorf("cannot test MUC operations: room %s does not exist or is not accessible", config.TestRoom)
+	}
+
+	if config.Verbose {
+		log.Printf("Room exists, proceeding to join...")
 	}
 
 	// Test joining the room
-	start := time.Now()
-	err := client.JoinRoom(config.TestRoom)
+	start = time.Now()
+	err = client.JoinRoom(config.TestRoom)
 	if err != nil {
 		return fmt.Errorf("failed to join MUC room %s: %w", config.TestRoom, err)
 	}
@@ -281,11 +332,12 @@ func testMUCOperations(client *xmpp.Client, config *Config) error {
 	if config.Verbose {
 		log.Printf("✅ Successfully left MUC room in %v", leaveDuration)
 		log.Printf("MUC operations summary:")
+		log.Printf("  Room existence check time: %v", checkDuration)
 		log.Printf("  Join time: %v", joinDuration)
 		log.Printf("  Send message time: %v", sendDuration)
 		log.Printf("  Wait time: 5s")
 		log.Printf("  Leave time: %v", leaveDuration)
-		log.Printf("  Total MUC time: %v", joinDuration+sendDuration+5*time.Second+leaveDuration)
+		log.Printf("  Total MUC time: %v", checkDuration+joinDuration+sendDuration+5*time.Second+leaveDuration)
 	}
 
 	return nil
@@ -319,9 +371,80 @@ func testDirectMessage(client *xmpp.Client, config *Config) error {
 	return nil
 }
 
+func testRoomExists(client *xmpp.Client, config *Config) error {
+	if config.Verbose {
+		log.Printf("Testing room existence functionality...")
+		log.Printf("Checking if test room exists: %s", config.TestRoom)
+	}
+
+	// Test room existence check
+	start := time.Now()
+	exists, err := client.CheckRoomExists(config.TestRoom)
+	if err != nil {
+		return fmt.Errorf("failed to check room existence for %s: %w", config.TestRoom, err)
+	}
+	checkDuration := time.Since(start)
+
+	if config.Verbose {
+		log.Printf("✅ Room existence check completed in %v", checkDuration)
+		log.Printf("Room %s exists: %t", config.TestRoom, exists)
+	}
+
+	// Test with a non-existent room to verify negative case
+	nonExistentRoom := "nonexistent-room-12345@conference.localhost"
+	if config.Verbose {
+		log.Printf("Testing negative case with non-existent room: %s", nonExistentRoom)
+	}
+
+	start = time.Now()
+	existsNegative, err := client.CheckRoomExists(nonExistentRoom)
+	if err != nil {
+		return fmt.Errorf("failed to check non-existent room %s: %w", nonExistentRoom, err)
+	}
+	checkNegativeDuration := time.Since(start)
+
+	if config.Verbose {
+		log.Printf("✅ Negative room existence check completed in %v", checkNegativeDuration)
+		log.Printf("Non-existent room %s exists: %t (should be false)", nonExistentRoom, existsNegative)
+		log.Printf("Room existence test summary:")
+		log.Printf("  Test room check time: %v", checkDuration)
+		log.Printf("  Negative case check time: %v", checkNegativeDuration)
+		log.Printf("  Total room existence test time: %v", checkDuration+checkNegativeDuration)
+	}
+
+	return nil
+}
+
 func maskPassword(password string) string {
 	if len(password) <= 2 {
 		return "****"
 	}
 	return password[:2] + "****"
+}
+
+// SimpleLogger provides basic logging functionality for the doctor command
+type SimpleLogger struct {
+	verbose bool
+}
+
+// LogDebug logs debug messages if verbose mode is enabled
+func (l *SimpleLogger) LogDebug(msg string, args ...interface{}) {
+	if l.verbose {
+		log.Printf("[DEBUG] "+msg, args...)
+	}
+}
+
+// LogInfo logs info messages
+func (l *SimpleLogger) LogInfo(msg string, args ...interface{}) {
+	log.Printf("[INFO] "+msg, args...)
+}
+
+// LogWarn logs warning messages
+func (l *SimpleLogger) LogWarn(msg string, args ...interface{}) {
+	log.Printf("[WARN] "+msg, args...)
+}
+
+// LogError logs error messages
+func (l *SimpleLogger) LogError(msg string, args ...interface{}) {
+	log.Printf("[ERROR] "+msg, args...)
 }

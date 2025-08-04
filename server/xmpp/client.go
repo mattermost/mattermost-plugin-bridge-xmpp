@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
 	"mellium.im/sasl"
 	"mellium.im/xmpp"
+	"mellium.im/xmpp/disco"
 	"mellium.im/xmpp/jid"
 	"mellium.im/xmpp/muc"
 	"mellium.im/xmpp/mux"
@@ -25,6 +27,7 @@ type Client struct {
 	remoteID     string      // Plugin remote ID for metadata
 	serverDomain string      // explicit server domain for testing
 	tlsConfig    *tls.Config // custom TLS configuration
+	logger       logger.Logger // Logger for debugging
 
 	// XMPP connection
 	session       *xmpp.Session
@@ -80,7 +83,7 @@ type UserProfile struct {
 }
 
 // NewClient creates a new XMPP client.
-func NewClient(serverURL, username, password, resource, remoteID string) *Client {
+func NewClient(serverURL, username, password, resource, remoteID string, logger logger.Logger) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
 	mucClient := &muc.Client{}
 	mux := mux.New("jabber:client", muc.HandleClient(mucClient))
@@ -91,6 +94,7 @@ func NewClient(serverURL, username, password, resource, remoteID string) *Client
 		password:     password,
 		resource:     resource,
 		remoteID:     remoteID,
+		logger:       logger,
 		ctx:          ctx,
 		cancel:       cancel,
 		mucClient:    mucClient,
@@ -100,8 +104,8 @@ func NewClient(serverURL, username, password, resource, remoteID string) *Client
 }
 
 // NewClientWithTLS creates a new XMPP client with custom TLS configuration.
-func NewClientWithTLS(serverURL, username, password, resource, remoteID string, tlsConfig *tls.Config) *Client {
-	client := NewClient(serverURL, username, password, resource, remoteID)
+func NewClientWithTLS(serverURL, username, password, resource, remoteID string, tlsConfig *tls.Config, logger logger.Logger) *Client {
+	client := NewClient(serverURL, username, password, resource, remoteID, logger)
 	client.tlsConfig = tlsConfig
 	return client
 }
@@ -429,4 +433,94 @@ func (c *Client) SetOnlinePresence() error {
 	}
 
 	return nil
+}
+
+// CheckRoomExists verifies if an XMPP room exists and is accessible using disco#info
+func (c *Client) CheckRoomExists(roomJID string) (bool, error) {
+	if c.session == nil {
+		return false, fmt.Errorf("XMPP session not established")
+	}
+
+	c.logger.LogDebug("Checking room existence using disco#info", "room_jid", roomJID)
+
+	// Parse and validate the room JID
+	roomAddr, err := jid.Parse(roomJID)
+	if err != nil {
+		c.logger.LogError("Invalid room JID", "room_jid", roomJID, "error", err)
+		return false, fmt.Errorf("invalid room JID: %w", err)
+	}
+
+	// Set timeout for the disco query
+	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+	defer cancel()
+
+	// Perform disco#info query to the room
+	info, err := disco.GetInfo(ctx, "", roomAddr, c.session)
+	if err != nil {
+		// Check if it's a service-unavailable or item-not-found error
+		if stanzaErr, ok := err.(stanza.Error); ok {
+			c.logger.LogDebug("Received stanza error during disco#info query", 
+				"room_jid", roomJID,
+				"error_condition", string(stanzaErr.Condition),
+				"error_type", string(stanzaErr.Type))
+
+			switch stanzaErr.Condition {
+			case stanza.ServiceUnavailable, stanza.ItemNotFound:
+				c.logger.LogDebug("Room does not exist", "room_jid", roomJID, "condition", string(stanzaErr.Condition))
+				return false, nil // Room doesn't exist
+			case stanza.Forbidden:
+				c.logger.LogWarn("Access denied to room (room exists but not accessible)", "room_jid", roomJID)
+				return false, fmt.Errorf("access denied to room %s", roomJID)
+			case stanza.NotAuthorized:
+				c.logger.LogWarn("Not authorized to query room (room exists but not queryable)", "room_jid", roomJID)
+				return false, fmt.Errorf("not authorized to query room %s", roomJID)
+			default:
+				c.logger.LogError("Unexpected disco query error", "room_jid", roomJID, "condition", string(stanzaErr.Condition), "error", err)
+				return false, fmt.Errorf("disco query failed: %w", err)
+			}
+		}
+		c.logger.LogError("Disco query error", "room_jid", roomJID, "error", err)
+		return false, fmt.Errorf("disco query error: %w", err)
+	}
+
+	c.logger.LogDebug("Received disco#info response, checking for MUC features", 
+		"room_jid", roomJID,
+		"features_count", len(info.Features),
+		"identities_count", len(info.Identity))
+
+	// Verify it's actually a MUC room by checking features
+	for _, feature := range info.Features {
+		if feature.Var == muc.NS { // "http://jabber.org/protocol/muc"
+			c.logger.LogDebug("Room exists and has MUC feature", "room_jid", roomJID)
+			return true, nil
+		}
+	}
+
+	// Check for conference identity as backup verification
+	for _, identity := range info.Identity {
+		if identity.Category == "conference" {
+			c.logger.LogDebug("Room exists and has conference identity", "room_jid", roomJID, "identity_type", identity.Type)
+			return true, nil
+		}
+	}
+
+	// Log all features and identities for debugging
+	c.logger.LogDebug("Room exists but doesn't appear to be a MUC room", 
+		"room_jid", roomJID,
+		"features", func() []string {
+			var features []string
+			for _, f := range info.Features {
+				features = append(features, f.Var)
+			}
+			return features
+		}(),
+		"identities", func() []string {
+			var identities []string
+			for _, i := range info.Identity {
+				identities = append(identities, fmt.Sprintf("%s/%s", i.Category, i.Type))
+			}
+			return identities
+		}())
+
+	return false, nil
 }

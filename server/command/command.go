@@ -54,6 +54,14 @@ func NewCommandHandler(client *pluginapi.Client, bridgeManager pluginModel.Bridg
 
 // ExecuteCommand hook calls this method to execute the commands that were registered in the NewCommandHandler function.
 func (c *Handler) Handle(args *model.CommandArgs) (*model.CommandResponse, error) {
+	// Check if user is system admin for all plugin commands
+	if !c.isSystemAdmin(args.UserId) {
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text:         "❌ Only system administrators can use XMPP bridge commands.",
+		}, nil
+	}
+
 	trigger := strings.TrimPrefix(strings.Fields(args.Command)[0], "/")
 	switch trigger {
 	case xmppBridgeCommandTrigger:
@@ -162,10 +170,7 @@ func (c *Handler) executeMapCommand(args *model.CommandArgs, fields []string) *m
 	
 	err = c.bridgeManager.OnChannelMappingCreated(mappingReq)
 	if err != nil {
-		return &model.CommandResponse{
-			ResponseType: model.CommandResponseTypeEphemeral,
-			Text:         fmt.Sprintf("❌ Failed to create channel mapping: %v", err),
-		}
+		return c.formatMappingError("create", roomJID, err)
 	}
 
 	return &model.CommandResponse{
@@ -212,10 +217,7 @@ func (c *Handler) executeUnmapCommand(args *model.CommandArgs) *model.CommandRes
 	
 	err = c.bridgeManager.OnChannelMappingDeleted(deleteReq)
 	if err != nil {
-		return &model.CommandResponse{
-			ResponseType: model.CommandResponseTypeEphemeral,
-			Text:         fmt.Sprintf("❌ Failed to unmap channel: %v", err),
-		}
+		return c.formatMappingError("delete", roomJID, err)
 	}
 
 	return &model.CommandResponse{
@@ -267,5 +269,87 @@ func (c *Handler) executeStatusCommand(args *model.CommandArgs) *model.CommandRe
 **Commands:**
 - Use `+"`/xmppbridge map <room_jid>`"+` to map this channel to an XMPP room
 - Use `+"`/xmppbridge unmap`"+` to unmap this channel from an XMPP room`, statusText, mappingText),
+	}
+}
+
+// isSystemAdmin checks if the user is a system administrator
+func (c *Handler) isSystemAdmin(userID string) bool {
+	user, err := c.client.User.Get(userID)
+	if err != nil {
+		c.client.Log.Warn("Failed to get user for admin check", "user_id", userID, "error", err)
+		return false
+	}
+	
+	return user.IsSystemAdmin()
+}
+
+// formatMappingError provides user-friendly error messages for mapping operations
+func (c *Handler) formatMappingError(operation, roomJID string, err error) *model.CommandResponse {
+	errorMsg := err.Error()
+	
+	// Handle specific error cases with user-friendly messages
+	switch {
+	case strings.Contains(errorMsg, "already mapped to channel"):
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text: fmt.Sprintf(`❌ **Room Already Mapped**
+
+The XMPP room **%s** is already connected to another channel.
+
+**What you can do:**
+- Choose a different XMPP room that isn't already in use
+- Unmap the room from the other channel first using ` + "`/xmppbridge unmap`" + `
+- Use ` + "`/xmppbridge status`" + ` to check current mappings`, roomJID),
+		}
+		
+	case strings.Contains(errorMsg, "does not exist"):
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text: fmt.Sprintf(`❌ **Room Not Found**
+
+The XMPP room **%s** doesn't exist or isn't accessible.
+
+**What you can do:**
+- Check that the room JID is spelled correctly
+- Make sure the room exists on the XMPP server
+- Verify you have permission to access the room
+- Contact your XMPP administrator if needed
+
+**Example format:** room@conference.example.com`, roomJID),
+		}
+		
+	case strings.Contains(errorMsg, "not connected"):
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text: `❌ **Bridge Not Connected**
+
+The XMPP bridge is currently disconnected.
+
+**What you can do:**
+- Wait a moment and try again (the bridge may be reconnecting)
+- Contact your system administrator
+- Use ` + "`/xmppbridge status`" + ` to check the connection status`,
+		}
+		
+	default:
+		// Generic error message for unknown cases
+		action := "create the mapping"
+		if operation == "delete" {
+			action = "remove the mapping"
+		}
+		
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text: fmt.Sprintf(`❌ **Operation Failed**
+
+Unable to %s for room **%s**.
+
+**What you can do:**
+- Try the command again in a few moments
+- Use ` + "`/xmppbridge status`" + ` to check the bridge status
+- Contact your system administrator if the problem persists
+
+**Error details:** %s`, action, roomJID, errorMsg),
+		}
 	}
 }

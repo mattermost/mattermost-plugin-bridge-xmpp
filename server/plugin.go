@@ -153,6 +153,7 @@ func (p *Plugin) initXMPPClient() {
 		cfg.XMPPPassword,
 		cfg.GetXMPPResource(),
 		p.remoteID,
+		p.logger,
 	)
 }
 

@@ -133,6 +133,12 @@ type Bridge interface {
 	// DeleteChannelMapping removes a mapping between a Mattermost channel ID and a bridge room ID.
 	DeleteChannelMapping(channelID string) error
 
+	// RoomExists checks if a room/channel exists on the remote service.
+	RoomExists(roomID string) (bool, error)
+
+	// GetRoomMapping retrieves the Mattermost channel ID for a given room ID (reverse lookup).
+	GetRoomMapping(roomID string) (string, error)
+
 	// IsConnected checks if the bridge is connected to the remote service.
 	IsConnected() bool
 }

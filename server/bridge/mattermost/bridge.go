@@ -255,3 +255,53 @@ func (b *mattermostBridge) DeleteChannelMapping(channelID string) error {
 	b.logger.LogInfo("Deleted Mattermost channel room mapping", "channel_id", channelID, "room_id", roomID)
 	return nil
 }
+
+// RoomExists checks if a Mattermost channel exists on the server
+func (b *mattermostBridge) RoomExists(roomID string) (bool, error) {
+	if b.api == nil {
+		return false, fmt.Errorf("Mattermost API not initialized")
+	}
+
+	b.logger.LogDebug("Checking if Mattermost channel exists", "channel_id", roomID)
+
+	// Use the Mattermost API to check if the channel exists
+	channel, appErr := b.api.GetChannel(roomID)
+	if appErr != nil {
+		if appErr.StatusCode == 404 {
+			b.logger.LogDebug("Mattermost channel does not exist", "channel_id", roomID)
+			return false, nil
+		}
+		b.logger.LogError("Failed to check channel existence", "channel_id", roomID, "error", appErr)
+		return false, fmt.Errorf("failed to check channel existence: %w", appErr)
+	}
+
+	if channel == nil {
+		b.logger.LogDebug("Mattermost channel does not exist (nil response)", "channel_id", roomID)
+		return false, nil
+	}
+
+	b.logger.LogDebug("Mattermost channel exists", "channel_id", roomID, "channel_name", channel.Name)
+	return true, nil
+}
+
+// GetRoomMapping retrieves the Mattermost channel ID for a given room ID (reverse lookup)
+func (b *mattermostBridge) GetRoomMapping(roomID string) (string, error) {
+	if b.kvstore == nil {
+		return "", fmt.Errorf("KV store not initialized")
+	}
+
+	b.logger.LogDebug("Getting channel mapping for Mattermost room", "room_id", roomID)
+
+	// Look up the channel ID using the room ID as the key
+	channelIDBytes, err := b.kvstore.Get(kvstore.BuildChannelMapKey("mattermost", roomID))
+	if err != nil {
+		// No mapping found is not an error, just return empty string
+		b.logger.LogDebug("No channel mapping found for room", "room_id", roomID)
+		return "", nil
+	}
+
+	channelID := string(channelIDBytes)
+	b.logger.LogDebug("Found channel mapping for room", "room_id", roomID, "channel_id", channelID)
+
+	return channelID, nil
+}

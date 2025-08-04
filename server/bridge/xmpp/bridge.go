@@ -73,6 +73,7 @@ func (b *xmppBridge) createXMPPClient(cfg *config.Configuration) *xmppClient.Cli
 		cfg.GetXMPPResource(),
 		"", // remoteID not needed for bridge user
 		tlsConfig,
+		b.logger,
 	)
 }
 
@@ -470,4 +471,49 @@ func (b *xmppBridge) DeleteChannelMapping(channelID string) error {
 
 	b.logger.LogInfo("Deleted channel room mapping", "channel_id", channelID, "room_jid", roomJID)
 	return nil
+}
+
+// RoomExists checks if an XMPP room exists on the remote service
+func (b *xmppBridge) RoomExists(roomID string) (bool, error) {
+	if !b.connected.Load() {
+		return false, fmt.Errorf("not connected to XMPP server")
+	}
+
+	if b.xmppClient == nil {
+		return false, fmt.Errorf("XMPP client not initialized")
+	}
+
+	b.logger.LogDebug("Checking if XMPP room exists", "room_jid", roomID)
+
+	// Use the XMPP client to check room existence
+	exists, err := b.xmppClient.CheckRoomExists(roomID)
+	if err != nil {
+		b.logger.LogError("Failed to check room existence", "room_jid", roomID, "error", err)
+		return false, fmt.Errorf("failed to check room existence: %w", err)
+	}
+
+	b.logger.LogDebug("Room existence check completed", "room_jid", roomID, "exists", exists)
+	return exists, nil
+}
+
+// GetRoomMapping retrieves the Mattermost channel ID for a given XMPP room JID (reverse lookup)
+func (b *xmppBridge) GetRoomMapping(roomID string) (string, error) {
+	if b.kvstore == nil {
+		return "", fmt.Errorf("KV store not initialized")
+	}
+
+	b.logger.LogDebug("Getting channel mapping for XMPP room", "room_jid", roomID)
+
+	// Look up the channel ID using the room JID as the key
+	channelIDBytes, err := b.kvstore.Get(kvstore.BuildChannelMapKey("xmpp", roomID))
+	if err != nil {
+		// No mapping found is not an error, just return empty string
+		b.logger.LogDebug("No channel mapping found for room", "room_jid", roomID)
+		return "", nil
+	}
+
+	channelID := string(channelIDBytes)
+	b.logger.LogDebug("Found channel mapping for room", "room_jid", roomID, "channel_id", channelID)
+	
+	return channelID, nil
 }
