@@ -52,11 +52,18 @@ func NewBridge(log logger.Logger, api plugin.API, kvstore kvstore.KVStore, cfg *
 	return bridge
 }
 
+// getConfiguration safely retrieves the current configuration
+func (b *mattermostBridge) getConfiguration() *config.Configuration {
+	b.configMu.RLock()
+	defer b.configMu.RUnlock()
+	return b.config
+}
+
 // UpdateConfiguration updates the bridge configuration
-func (b *mattermostBridge) UpdateConfiguration(newConfig any) error {
-	cfg, ok := newConfig.(*config.Configuration)
-	if !ok {
-		return fmt.Errorf("invalid configuration type")
+func (b *mattermostBridge) UpdateConfiguration(cfg *config.Configuration) error {
+	// Validate configuration using built-in validation
+	if err := cfg.IsValid(); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	b.configMu.Lock()

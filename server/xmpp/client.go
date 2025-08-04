@@ -18,6 +18,11 @@ import (
 	"mellium.im/xmpp/stanza"
 )
 
+const (
+	// defaultOperationTimeout is the default timeout for XMPP operations
+	defaultOperationTimeout = 5 * time.Second
+)
+
 // Client represents an XMPP client for communicating with XMPP servers.
 type Client struct {
 	serverURL    string
@@ -150,9 +155,13 @@ func (c *Client) Connect() error {
 		}
 	}
 
-	// Use DialClientSession for proper SASL authentication
+	// Create a timeout context for the connection attempt (30 seconds)
+	connectCtx, connectCancel := context.WithTimeout(c.ctx, 30*time.Second)
+	defer connectCancel()
+
+	// Use DialClientSession for proper SASL authentication with timeout
 	c.session, err = xmpp.DialClientSession(
-		c.ctx,
+		connectCtx,
 		c.jidAddr,
 		xmpp.StartTLS(tlsConfig),
 		xmpp.SASL("", c.password, sasl.Plain),
@@ -171,9 +180,12 @@ func (c *Client) Connect() error {
 		if !c.sessionServing {
 			return fmt.Errorf("failed to start session serving")
 		}
+		c.logger.LogInfo("XMPP client connected successfully", "jid", c.jidAddr.String())
 		return nil
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		return fmt.Errorf("timeout waiting for session to be ready")
+	case <-c.ctx.Done():
+		return fmt.Errorf("connection cancelled: %w", c.ctx.Err())
 	}
 }
 
@@ -206,18 +218,46 @@ func (c *Client) serveSession() {
 
 // Disconnect closes the XMPP connection
 func (c *Client) Disconnect() error {
-	if c.session != nil {
-		err := c.session.Close()
-		c.session = nil
-		if err != nil {
-			return fmt.Errorf("failed to close XMPP session: %w", err)
-		}
+	if c.session == nil {
+		return nil // Already disconnected
 	}
 
+	c.logger.LogInfo("Disconnecting XMPP client", "jid", c.jidAddr.String())
+
+	// Send offline presence before disconnecting to properly leave rooms
+	if err := c.SetOfflinePresence(); err != nil {
+		c.logger.LogWarn("Failed to set offline presence before disconnect", "error", err)
+		// Don't fail the disconnect for presence issues
+	}
+
+	// Close the session with a timeout to prevent hanging
+	sessionCloseCtx, cancel := context.WithTimeout(context.Background(), defaultOperationTimeout)
+	defer cancel()
+
+	sessionCloseDone := make(chan error, 1)
+	go func() {
+		sessionCloseDone <- c.session.Close()
+	}()
+
+	select {
+	case err := <-sessionCloseDone:
+		c.session = nil
+		if err != nil {
+			c.logger.LogWarn("Error closing XMPP session", "error", err)
+			return fmt.Errorf("failed to close XMPP session: %w", err)
+		}
+	case <-sessionCloseCtx.Done():
+		c.logger.LogWarn("Timeout closing XMPP session, forcing disconnect")
+		c.session = nil
+		// Continue with cleanup even on timeout
+	}
+
+	// Cancel the client context
 	if c.cancel != nil {
 		c.cancel()
 	}
 
+	c.logger.LogInfo("XMPP client disconnected successfully")
 	return nil
 }
 
@@ -413,6 +453,30 @@ func (c *Client) SetOnlinePresence() error {
 	// Send the presence stanza
 	if err := c.session.Encode(c.ctx, presence); err != nil {
 		return fmt.Errorf("failed to send online presence: %w", err)
+	}
+
+	return nil
+}
+
+// SetOfflinePresence sends an offline presence stanza to indicate the client is going offline
+func (c *Client) SetOfflinePresence() error {
+	if c.session == nil {
+		return fmt.Errorf("XMPP session not established")
+	}
+
+	// Create presence stanza indicating we're unavailable
+	presence := stanza.Presence{
+		Type: stanza.UnavailablePresence,
+		From: c.jidAddr,
+	}
+
+	// Create a context with timeout for the presence update
+	ctx, cancel := context.WithTimeout(context.Background(), defaultOperationTimeout)
+	defer cancel()
+
+	// Send the presence stanza
+	if err := c.session.Encode(ctx, presence); err != nil {
+		return fmt.Errorf("failed to send offline presence: %w", err)
 	}
 
 	return nil

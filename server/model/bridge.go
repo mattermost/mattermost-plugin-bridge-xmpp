@@ -110,7 +110,7 @@ type BridgeManager interface {
 	// OnPluginConfigurationChange propagates configuration changes to all registered bridges.
 	// Returns an error if any bridge fails to update its configuration, but continues to
 	// attempt updating all bridges.
-	OnPluginConfigurationChange(config any) error
+	OnPluginConfigurationChange(config *config.Configuration) error
 
 	// CreateChannelMapping is called when a channel mapping is created.
 	CreateChannelMapping(req CreateChannelMappingRequest) error
@@ -121,7 +121,7 @@ type BridgeManager interface {
 
 type Bridge interface {
 	// UpdateConfiguration updates the bridge configuration
-	UpdateConfiguration(config any) error
+	UpdateConfiguration(config *config.Configuration) error
 
 	// Start starts the bridge
 	Start() error

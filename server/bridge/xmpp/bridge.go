@@ -80,56 +80,50 @@ func (b *xmppBridge) createXMPPClient(cfg *config.Configuration) *xmppClient.Cli
 	)
 }
 
+// getConfiguration safely retrieves the current configuration
+func (b *xmppBridge) getConfiguration() *config.Configuration {
+	b.configMu.RLock()
+	defer b.configMu.RUnlock()
+	return b.config
+}
+
 // UpdateConfiguration updates the bridge configuration
-func (b *xmppBridge) UpdateConfiguration(newConfig any) error {
-	cfg, ok := newConfig.(*config.Configuration)
-	if !ok {
-		return fmt.Errorf("invalid configuration type")
+// It handles validation and reconnection logic when the configuration changes
+func (b *xmppBridge) UpdateConfiguration(cfg *config.Configuration) error {
+	// Validate configuration using built-in validation
+	if err := cfg.IsValid(); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	b.configMu.Lock()
-	oldConfig := b.config
-	b.config = cfg
-	defer b.configMu.Unlock()
+	// Get current config to check if restart is needed
+	oldConfig := b.getConfiguration()
 
-	b.logger.LogInfo("XMPP bridge configuration updated")
+	// Update configuration under lock, then release immediately
+	b.configMu.Lock()
+	b.config = cfg
 
 	// Initialize or update XMPP client with new configuration
-	if cfg.EnableSync {
-		if cfg.XMPPServerURL == "" || cfg.XMPPUsername == "" || cfg.XMPPPassword == "" {
-			return fmt.Errorf("XMPP server URL, username, and password are required when sync is enabled")
+	if !cfg.Equals(oldConfig) {
+		if b.bridgeClient != nil && b.bridgeClient.Disconnect() != nil {
+			b.logger.LogError("Failed to disconnect old XMPP bridge client")
 		}
-
 		b.bridgeClient = b.createXMPPClient(cfg)
-	} else {
-		b.bridgeClient = nil
+	}
+	b.configMu.Unlock()
+
+	// Stop the bridge
+	if err := b.Stop(); err != nil {
+		b.logger.LogWarn("Error stopping bridge during restart", "error", err)
 	}
 
-	// Check if we need to restart the bridge due to configuration changes
-	wasConnected := b.connected.Load()
-	needsRestart := oldConfig != nil && !oldConfig.Equals(cfg) && wasConnected
-
-	// Log the configuration change
-	if needsRestart {
-		b.logger.LogInfo("Configuration changed, restarting bridge")
-	} else {
-		b.logger.LogInfo("Configuration updated", "config", cfg)
+	// Start the bridge with new configuration
+	// Start() method already uses getConfiguration() safely
+	if err := b.Start(); err != nil {
+		b.logger.LogError("Failed to restart bridge with new configuration", "error", err)
+		return fmt.Errorf("failed to restart bridge: %w", err)
 	}
 
-	if needsRestart {
-		b.logger.LogInfo("Configuration changed, restarting bridge")
-
-		// Stop the bridge
-		if err := b.Stop(); err != nil {
-			b.logger.LogWarn("Error stopping bridge during restart", "error", err)
-		}
-
-		// Start the bridge with new configuration
-		if err := b.Start(); err != nil {
-			b.logger.LogError("Failed to restart bridge with new configuration", "error", err)
-			return fmt.Errorf("failed to restart bridge: %w", err)
-		}
-	}
+	b.logger.LogDebug("XMPP bridge configuration updated successfully")
 
 	return nil
 }

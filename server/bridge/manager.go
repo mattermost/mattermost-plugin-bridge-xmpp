@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/config"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
 	mmModel "github.com/mattermost/mattermost/server/public/model"
@@ -196,7 +197,7 @@ func (m *BridgeManager) Shutdown() error {
 }
 
 // OnPluginConfigurationChange propagates configuration changes to all registered bridges
-func (m *BridgeManager) OnPluginConfigurationChange(config any) error {
+func (m *BridgeManager) OnPluginConfigurationChange(config *config.Configuration) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

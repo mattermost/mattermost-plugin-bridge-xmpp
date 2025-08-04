@@ -57,7 +57,7 @@ func (p *Plugin) OnConfigurationChange() error {
 		return errors.Wrap(err, "failed to load plugin configuration")
 	}
 
-	p.API.LogDebug("Loaded configuration in OnConfigurationChange", "configuration", configuration)
+	p.API.LogDebug("Plugin configuration changed")
 
 	// Validate the configuration
 	if err := configuration.IsValid(); err != nil {
