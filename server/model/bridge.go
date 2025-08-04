@@ -152,6 +152,12 @@ type Bridge interface {
 
 	// GetUserManager returns the user manager for this bridge.
 	GetUserManager() BridgeUserManager
+
+	// Message handling for bidirectional communication
+	GetMessageChannel() <-chan *DirectionalMessage
+	SendMessage(msg *BridgeMessage) error
+	GetMessageHandler() MessageHandler
+	GetUserResolver() UserResolver
 }
 
 // BridgeUser represents a user connected to any bridge service

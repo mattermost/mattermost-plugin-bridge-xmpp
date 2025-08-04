@@ -14,12 +14,22 @@ import (
 	"github.com/mattermost/mattermost/server/public/plugin"
 )
 
+const (
+	// defaultMessageBufferSize is the buffer size for incoming message channels
+	defaultMessageBufferSize = 1000
+)
+
 // mattermostBridge handles syncing messages between Mattermost instances
 type mattermostBridge struct {
 	logger      logger.Logger
 	api         plugin.API
 	kvstore     kvstore.KVStore
 	userManager pluginModel.BridgeUserManager
+
+	// Message handling
+	messageHandler   *mattermostMessageHandler
+	userResolver     *mattermostUserResolver
+	incomingMessages chan *pluginModel.DirectionalMessage
 
 	// Connection management
 	connected atomic.Bool
@@ -38,18 +48,23 @@ type mattermostBridge struct {
 // NewBridge creates a new Mattermost bridge
 func NewBridge(log logger.Logger, api plugin.API, kvstore kvstore.KVStore, cfg *config.Configuration) pluginModel.Bridge {
 	ctx, cancel := context.WithCancel(context.Background())
-	bridge := &mattermostBridge{
-		logger:          log,
-		api:             api,
-		kvstore:         kvstore,
-		ctx:             ctx,
-		cancel:          cancel,
-		channelMappings: make(map[string]string),
-		config:          cfg,
-		userManager:     bridge.NewUserManager("mattermost", log),
+	b := &mattermostBridge{
+		logger:           log,
+		api:              api,
+		kvstore:          kvstore,
+		ctx:              ctx,
+		cancel:           cancel,
+		channelMappings:  make(map[string]string),
+		config:           cfg,
+		userManager:      bridge.NewUserManager("mattermost", log),
+		incomingMessages: make(chan *pluginModel.DirectionalMessage, defaultMessageBufferSize),
 	}
 
-	return bridge
+	// Initialize handlers after bridge is created
+	b.messageHandler = newMessageHandler(b)
+	b.userResolver = newUserResolver(b)
+
+	return b
 }
 
 // getConfiguration safely retrieves the current configuration
@@ -342,4 +357,24 @@ func (b *mattermostBridge) GetRoomMapping(roomID string) (string, error) {
 // GetUserManager returns the user manager for this bridge
 func (b *mattermostBridge) GetUserManager() pluginModel.BridgeUserManager {
 	return b.userManager
+}
+
+// GetMessageChannel returns the channel for incoming messages from Mattermost
+func (b *mattermostBridge) GetMessageChannel() <-chan *pluginModel.DirectionalMessage {
+	return b.incomingMessages
+}
+
+// SendMessage sends a message to a Mattermost channel
+func (b *mattermostBridge) SendMessage(msg *pluginModel.BridgeMessage) error {
+	return b.messageHandler.postMessageToMattermost(msg)
+}
+
+// GetMessageHandler returns the message handler for this bridge
+func (b *mattermostBridge) GetMessageHandler() pluginModel.MessageHandler {
+	return b.messageHandler
+}
+
+// GetUserResolver returns the user resolver for this bridge
+func (b *mattermostBridge) GetUserResolver() pluginModel.UserResolver {
+	return b.userResolver
 }

@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -13,11 +14,15 @@ import (
 
 // BridgeManager manages multiple bridge instances
 type BridgeManager struct {
-	bridges  map[string]model.Bridge
-	mu       sync.RWMutex
-	logger   logger.Logger
-	api      plugin.API
-	remoteID string
+	bridges    map[string]model.Bridge
+	mu         sync.RWMutex
+	logger     logger.Logger
+	api        plugin.API
+	remoteID   string
+	messageBus model.MessageBus
+	routingCtx context.Context
+	routingCancel context.CancelFunc
+	routingWg  sync.WaitGroup
 }
 
 // NewBridgeManager creates a new bridge manager
@@ -29,11 +34,16 @@ func NewBridgeManager(logger logger.Logger, api plugin.API, remoteID string) mod
 		panic("plugin API cannot be nil")
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &BridgeManager{
-		bridges:  make(map[string]model.Bridge),
-		logger:   logger,
-		api:      api,
-		remoteID: remoteID,
+		bridges:       make(map[string]model.Bridge),
+		logger:        logger,
+		api:           api,
+		remoteID:      remoteID,
+		messageBus:    NewMessageBus(logger),
+		routingCtx:    ctx,
+		routingCancel: cancel,
 	}
 }
 
@@ -55,6 +65,9 @@ func (m *BridgeManager) RegisterBridge(name string, bridge model.Bridge) error {
 
 	m.bridges[name] = bridge
 	m.logger.LogInfo("Bridge registered", "name", name)
+
+	// Subscribe bridge to message bus
+	go m.startBridgeMessageHandler(name, bridge)
 
 	return nil
 }
@@ -404,4 +417,117 @@ func (m *BridgeManager) unshareChannel(channelID string) error {
 	}
 
 	return nil
+}
+
+// startBridgeMessageHandler starts message handling for a specific bridge
+func (m *BridgeManager) startBridgeMessageHandler(bridgeName string, bridge model.Bridge) {
+	m.logger.LogDebug("Starting message handler for bridge", "bridge", bridgeName)
+	
+	// Subscribe to message bus
+	messageChannel := m.messageBus.Subscribe(bridgeName)
+	
+	// Start message routing goroutine
+	m.routingWg.Add(1)
+	go func() {
+		defer m.routingWg.Done()
+		defer m.logger.LogDebug("Message handler stopped for bridge", "bridge", bridgeName)
+		
+		for {
+			select {
+			case msg, ok := <-messageChannel:
+				if !ok {
+					m.logger.LogDebug("Message channel closed for bridge", "bridge", bridgeName)
+					return
+				}
+				
+				if err := m.handleBridgeMessage(bridgeName, bridge, msg); err != nil {
+					m.logger.LogError("Failed to handle message for bridge", 
+						"bridge", bridgeName,
+						"source_bridge", msg.SourceBridge,
+						"error", err)
+				}
+				
+			case <-m.routingCtx.Done():
+				m.logger.LogDebug("Context cancelled, stopping message handler", "bridge", bridgeName)
+				return
+			}
+		}
+	}()
+	
+	// Listen to bridge's outgoing messages
+	m.routingWg.Add(1)
+	go func() {
+		defer m.routingWg.Done()
+		defer m.logger.LogDebug("Bridge message listener stopped", "bridge", bridgeName)
+		
+		bridgeMessageChannel := bridge.GetMessageChannel()
+		for {
+			select {
+			case msg, ok := <-bridgeMessageChannel:
+				if !ok {
+					m.logger.LogDebug("Bridge message channel closed", "bridge", bridgeName)
+					return
+				}
+				
+				if err := m.messageBus.Publish(msg); err != nil {
+					m.logger.LogError("Failed to publish message from bridge", 
+						"bridge", bridgeName,
+						"direction", msg.Direction,
+						"error", err)
+				}
+				
+			case <-m.routingCtx.Done():
+				m.logger.LogDebug("Context cancelled, stopping bridge listener", "bridge", bridgeName)
+				return
+			}
+		}
+	}()
+}
+
+// handleBridgeMessage processes an incoming message for a specific bridge
+func (m *BridgeManager) handleBridgeMessage(bridgeName string, bridge model.Bridge, msg *model.DirectionalMessage) error {
+	m.logger.LogDebug("Handling message for bridge", 
+		"target_bridge", bridgeName,
+		"source_bridge", msg.SourceBridge,
+		"direction", msg.Direction,
+		"channel_id", msg.SourceChannelID)
+	
+	// Get the bridge's message handler
+	handler := bridge.GetMessageHandler()
+	if handler == nil {
+		return fmt.Errorf("bridge %s does not have a message handler", bridgeName)
+	}
+	
+	// Check if the handler can process this message
+	if !handler.CanHandleMessage(msg.BridgeMessage) {
+		m.logger.LogDebug("Bridge cannot handle message", 
+			"bridge", bridgeName,
+			"message_type", msg.MessageType)
+		return nil // Not an error, just skip
+	}
+	
+	// Process the message
+	return handler.ProcessMessage(msg)
+}
+
+// StartMessageRouting starts the message bus and routing system
+func (m *BridgeManager) StartMessageRouting() error {
+	m.logger.LogInfo("Starting message routing system")
+	return m.messageBus.Start()
+}
+
+// StopMessageRouting stops the message bus and routing system
+func (m *BridgeManager) StopMessageRouting() error {
+	m.logger.LogInfo("Stopping message routing system")
+	
+	// Cancel routing context
+	if m.routingCancel != nil {
+		m.routingCancel()
+	}
+	
+	// Wait for all routing goroutines to finish
+	m.routingWg.Wait()
+	
+	// Stop the message bus
+	return m.messageBus.Stop()
 }

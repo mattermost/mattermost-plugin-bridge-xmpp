@@ -18,6 +18,11 @@ import (
 	"github.com/mattermost/mattermost/server/public/plugin"
 )
 
+const (
+	// defaultMessageBufferSize is the buffer size for incoming message channels
+	defaultMessageBufferSize = 1000
+)
+
 // xmppBridge handles syncing messages between Mattermost and XMPP
 type xmppBridge struct {
 	logger       logger.Logger
@@ -25,6 +30,11 @@ type xmppBridge struct {
 	kvstore      kvstore.KVStore
 	bridgeClient *xmppClient.Client // Main bridge XMPP client connection
 	userManager  pluginModel.BridgeUserManager
+
+	// Message handling
+	messageHandler   *xmppMessageHandler
+	userResolver     *xmppUserResolver
+	incomingMessages chan *pluginModel.DirectionalMessage
 
 	// Connection management
 	connected atomic.Bool
@@ -44,15 +54,20 @@ type xmppBridge struct {
 func NewBridge(log logger.Logger, api plugin.API, kvstore kvstore.KVStore, cfg *config.Configuration) pluginModel.Bridge {
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &xmppBridge{
-		logger:          log,
-		api:             api,
-		kvstore:         kvstore,
-		ctx:             ctx,
-		cancel:          cancel,
-		channelMappings: make(map[string]string),
-		config:          cfg,
-		userManager:     bridge.NewUserManager("xmpp", log),
+		logger:           log,
+		api:              api,
+		kvstore:          kvstore,
+		ctx:              ctx,
+		cancel:           cancel,
+		channelMappings:  make(map[string]string),
+		config:           cfg,
+		userManager:      bridge.NewUserManager("xmpp", log),
+		incomingMessages: make(chan *pluginModel.DirectionalMessage, defaultMessageBufferSize),
 	}
+
+	// Initialize handlers after bridge is created
+	b.messageHandler = newMessageHandler(b)
+	b.userResolver = newUserResolver(b)
 
 	// Initialize XMPP client with configuration
 	if cfg.EnableSync && cfg.XMPPServerURL != "" && cfg.XMPPUsername != "" && cfg.XMPPPassword != "" {
@@ -159,6 +174,9 @@ func (b *xmppBridge) Start() error {
 
 	// Start connection monitor
 	go b.connectionMonitor()
+
+	// Start message aggregation
+	go b.startMessageAggregation()
 
 	b.logger.LogInfo("Mattermost to XMPP bridge started successfully")
 	return nil
@@ -532,4 +550,68 @@ func (b *xmppBridge) GetRoomMapping(roomID string) (string, error) {
 // GetUserManager returns the user manager for this bridge
 func (b *xmppBridge) GetUserManager() pluginModel.BridgeUserManager {
 	return b.userManager
+}
+
+// startMessageAggregation starts the message aggregation goroutine
+func (b *xmppBridge) startMessageAggregation() {
+	b.logger.LogDebug("Starting XMPP message aggregation")
+
+	for {
+		select {
+		case <-b.ctx.Done():
+			b.logger.LogDebug("Stopping XMPP message aggregation")
+			return
+		default:
+			// Aggregate messages from bridge client if available
+			if b.bridgeClient != nil {
+				clientChannel := b.bridgeClient.GetMessageChannel()
+				select {
+				case msg, ok := <-clientChannel:
+					if !ok {
+						b.logger.LogDebug("Bridge client message channel closed")
+						continue
+					}
+
+					// Forward to our bridge's message channel
+					select {
+					case b.incomingMessages <- msg:
+						b.logger.LogDebug("Message forwarded from bridge client",
+							"source_channel", msg.SourceChannelID,
+							"user_id", msg.SourceUserID)
+					default:
+						b.logger.LogWarn("Bridge message channel full, dropping message",
+							"source_channel", msg.SourceChannelID,
+							"user_id", msg.SourceUserID)
+					}
+				case <-b.ctx.Done():
+					return
+				default:
+					// No messages available, continue with other potential sources
+				}
+			}
+
+			// TODO: Add aggregation from user client channels when implemented
+			// This is where we would aggregate from multiple XMPP user connections
+		}
+	}
+}
+
+// GetMessageChannel returns the channel for incoming messages from XMPP
+func (b *xmppBridge) GetMessageChannel() <-chan *pluginModel.DirectionalMessage {
+	return b.incomingMessages
+}
+
+// SendMessage sends a message to an XMPP room
+func (b *xmppBridge) SendMessage(msg *pluginModel.BridgeMessage) error {
+	return b.messageHandler.sendMessageToXMPP(msg)
+}
+
+// GetMessageHandler returns the message handler for this bridge
+func (b *xmppBridge) GetMessageHandler() pluginModel.MessageHandler {
+	return b.messageHandler
+}
+
+// GetUserResolver returns the user resolver for this bridge
+func (b *xmppBridge) GetUserResolver() pluginModel.UserResolver {
+	return b.userResolver
 }

@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
+	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
 	"mellium.im/sasl"
+	"mellium.im/xmlstream"
 	"mellium.im/xmpp"
 	"mellium.im/xmpp/disco"
 	"mellium.im/xmpp/jid"
@@ -21,6 +23,9 @@ import (
 const (
 	// defaultOperationTimeout is the default timeout for XMPP operations
 	defaultOperationTimeout = 5 * time.Second
+
+	// msgBufferSize is the buffer size for incoming message channels
+	msgBufferSize = 1000
 )
 
 // Client represents an XMPP client for communicating with XMPP servers.
@@ -43,6 +48,9 @@ type Client struct {
 	mux            *mux.ServeMux
 	sessionReady   chan struct{}
 	sessionServing bool
+
+	// Message handling for bridge integration
+	incomingMessages chan *model.DirectionalMessage
 }
 
 // MessageRequest represents a request to send a message.
@@ -90,22 +98,31 @@ type UserProfile struct {
 // NewClient creates a new XMPP client.
 func NewClient(serverURL, username, password, resource, remoteID string, logger logger.Logger) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
-	mucClient := &muc.Client{}
-	mux := mux.New("jabber:client", muc.HandleClient(mucClient))
 
-	return &Client{
-		serverURL:    serverURL,
-		username:     username,
-		password:     password,
-		resource:     resource,
-		remoteID:     remoteID,
-		logger:       logger,
-		ctx:          ctx,
-		cancel:       cancel,
-		mucClient:    mucClient,
-		mux:          mux,
-		sessionReady: make(chan struct{}),
+	client := &Client{
+		serverURL:        serverURL,
+		username:         username,
+		password:         password,
+		resource:         resource,
+		remoteID:         remoteID,
+		logger:           logger,
+		ctx:              ctx,
+		cancel:           cancel,
+		sessionReady:     make(chan struct{}),
+		incomingMessages: make(chan *model.DirectionalMessage, msgBufferSize),
 	}
+
+	// Create MUC client and set up message handling
+	mucClient := &muc.Client{}
+	client.mucClient = mucClient
+
+	// Create mux with MUC client and our message handler
+	mux := mux.New("jabber:client",
+		muc.HandleClient(mucClient),
+		mux.MessageFunc(stanza.GroupChatMessage, xml.Name{}, client.handleIncomingMessage))
+	client.mux = mux
+
+	return client
 }
 
 // NewClientWithTLS creates a new XMPP client with custom TLS configuration.
@@ -598,4 +615,111 @@ func (c *Client) Ping() error {
 	duration := time.Since(start)
 	c.logger.LogDebug("XMPP ping successful", "duration", duration)
 	return nil
+}
+
+// GetMessageChannel returns the channel for incoming messages (Bridge interface)
+func (c *Client) GetMessageChannel() <-chan *model.DirectionalMessage {
+	return c.incomingMessages
+}
+
+// handleIncomingMessage processes incoming XMPP message stanzas
+func (c *Client) handleIncomingMessage(msg stanza.Message, t xmlstream.TokenReadEncoder) error {
+	c.logger.LogDebug("Received XMPP message",
+		"from", msg.From.String(),
+		"to", msg.To.String(),
+		"type", fmt.Sprintf("%v", msg.Type))
+
+	// Only process groupchat messages for now (MUC messages from channels)
+	if msg.Type != stanza.GroupChatMessage {
+		c.logger.LogDebug("Ignoring non-groupchat message", "type", fmt.Sprintf("%v", msg.Type))
+		return nil
+	}
+
+	// Parse the message body from the token reader
+	var msgWithBody struct {
+		stanza.Message
+		Body string `xml:"body"`
+	}
+	msgWithBody.Message = msg
+
+	d := xml.NewTokenDecoder(t)
+	if err := d.DecodeElement(&msgWithBody, nil); err != nil {
+		c.logger.LogError("Failed to decode message body", "error", err)
+		return err
+	}
+
+	if msgWithBody.Body == "" {
+		c.logger.LogDebug("Message has no body, ignoring")
+		return nil
+	}
+
+	// Extract channel and user information from JIDs
+	channelID, err := c.extractChannelID(msg.From)
+	if err != nil {
+		c.logger.LogError("Failed to extract channel ID from JID", "from", msg.From.String(), "error", err)
+		return nil
+	}
+
+	userID, userName := c.extractUserInfo(msg.From)
+
+	// Create BridgeMessage
+	bridgeMsg := &model.BridgeMessage{
+		SourceBridge:    "xmpp",
+		SourceChannelID: channelID,
+		SourceUserID:    userID,
+		SourceUserName:  userName,
+		Content:         msgWithBody.Body, // Already Markdown compatible
+		MessageType:     "text",
+		Timestamp:       time.Now(), // XMPP doesn't always provide timestamps
+		MessageID:       msg.ID,
+		TargetBridges:   []string{}, // Will be routed to all other bridges
+		Metadata: map[string]any{
+			"xmpp_from": msg.From.String(),
+			"xmpp_to":   msg.To.String(),
+		},
+	}
+
+	// Wrap in directional message
+	directionalMsg := &model.DirectionalMessage{
+		BridgeMessage: bridgeMsg,
+		Direction:     model.DirectionIncoming,
+	}
+
+	// Send to message channel (non-blocking)
+	select {
+	case c.incomingMessages <- directionalMsg:
+		c.logger.LogDebug("Message queued for processing",
+			"channel_id", channelID,
+			"user_id", userID,
+			"content_length", len(msgWithBody.Body))
+	default:
+		c.logger.LogWarn("Message channel full, dropping message",
+			"channel_id", channelID,
+			"user_id", userID)
+	}
+
+	return nil
+}
+
+// extractChannelID extracts the channel ID (room bare JID) from a message JID
+func (c *Client) extractChannelID(from jid.JID) (string, error) {
+	// For MUC messages, the channel ID is the bare JID (without resource/nickname)
+	return from.Bare().String(), nil
+}
+
+// extractUserInfo extracts user ID and display name from a message JID
+func (c *Client) extractUserInfo(from jid.JID) (string, string) {
+	// For MUC messages, the resource part is the nickname
+	nickname := from.Resourcepart()
+
+	// Use the full JID as user ID for XMPP
+	userID := from.String()
+
+	// Use nickname as display name if available, otherwise use full JID
+	displayName := nickname
+	if displayName == "" {
+		displayName = from.String()
+	}
+
+	return userID, displayName
 }
