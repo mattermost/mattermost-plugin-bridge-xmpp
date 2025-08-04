@@ -178,7 +178,7 @@ func testXMPPClient(config *Config) error {
 	var mucDuration time.Duration
 	var dmDuration time.Duration
 	var roomExistsDuration time.Duration
-	
+
 	// Test MUC operations if requested
 	if config.TestMUC {
 		start = time.Now()
@@ -286,7 +286,7 @@ func testMUCOperations(client *xmpp.Client, config *Config) error {
 		return fmt.Errorf("failed to join MUC room %s: %w", config.TestRoom, err)
 	}
 	joinDuration := time.Since(start)
-	
+
 	var sendDuration time.Duration
 
 	if config.Verbose {
@@ -300,7 +300,7 @@ func testMUCOperations(client *xmpp.Client, config *Config) error {
 		RoomJID: config.TestRoom,
 		Message: testMessage,
 	}
-	
+
 	start = time.Now()
 	_, err = client.SendMessage(messageReq)
 	if err != nil {
@@ -352,7 +352,7 @@ func testDirectMessage(client *xmpp.Client, config *Config) error {
 	// Send a test message to the admin user
 	testMessage := fmt.Sprintf("Test direct message from XMPP doctor at %s", time.Now().Format("15:04:05"))
 	adminJID := "admin@localhost" // Default admin user for development server
-	
+
 	start := time.Now()
 	err := client.SendDirectMessage(adminJID, testMessage)
 	if err != nil {

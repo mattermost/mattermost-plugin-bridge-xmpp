@@ -43,7 +43,7 @@ type XMPPUser struct {
 // NewXMPPUser creates a new XMPP user
 func NewXMPPUser(id, displayName, jid string, cfg *config.Configuration, logger logger.Logger) *XMPPUser {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// Create TLS config based on certificate verification setting
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: cfg.XMPPInsecureSkipVerify,
@@ -112,13 +112,13 @@ func (u *XMPPUser) GetState() model.UserState {
 func (u *XMPPUser) SetState(state model.UserState) error {
 	u.stateMu.Lock()
 	defer u.stateMu.Unlock()
-	
+
 	u.logger.LogDebug("Changing XMPP user state", "user_id", u.id, "old_state", u.state, "new_state", state)
 	u.state = state
-	
+
 	// TODO: Send presence update to XMPP server based on state
 	// This would involve mapping UserState to XMPP presence types
-	
+
 	return nil
 }
 
@@ -127,15 +127,15 @@ func (u *XMPPUser) JoinChannel(channelID string) error {
 	if !u.connected.Load() {
 		return fmt.Errorf("user %s is not connected", u.id)
 	}
-	
+
 	u.logger.LogDebug("XMPP user joining channel", "user_id", u.id, "channel_id", channelID)
-	
+
 	// For XMPP, channelID is the room JID
 	err := u.client.JoinRoom(channelID)
 	if err != nil {
 		return fmt.Errorf("failed to join XMPP room %s: %w", channelID, err)
 	}
-	
+
 	u.logger.LogInfo("XMPP user joined channel", "user_id", u.id, "channel_id", channelID)
 	return nil
 }
@@ -144,15 +144,15 @@ func (u *XMPPUser) LeaveChannel(channelID string) error {
 	if !u.connected.Load() {
 		return fmt.Errorf("user %s is not connected", u.id)
 	}
-	
+
 	u.logger.LogDebug("XMPP user leaving channel", "user_id", u.id, "channel_id", channelID)
-	
+
 	// For XMPP, channelID is the room JID
 	err := u.client.LeaveRoom(channelID)
 	if err != nil {
 		return fmt.Errorf("failed to leave XMPP room %s: %w", channelID, err)
 	}
-	
+
 	u.logger.LogInfo("XMPP user left channel", "user_id", u.id, "channel_id", channelID)
 	return nil
 }
@@ -161,21 +161,21 @@ func (u *XMPPUser) SendMessageToChannel(channelID, message string) error {
 	if !u.connected.Load() {
 		return fmt.Errorf("user %s is not connected", u.id)
 	}
-	
+
 	u.logger.LogDebug("XMPP user sending message to channel", "user_id", u.id, "channel_id", channelID)
-	
+
 	// Create message request for XMPP
 	req := xmppClient.MessageRequest{
 		RoomJID:      channelID,
 		GhostUserJID: u.jid,
 		Message:      message,
 	}
-	
+
 	_, err := u.client.SendMessage(req)
 	if err != nil {
 		return fmt.Errorf("failed to send message to XMPP room %s: %w", channelID, err)
 	}
-	
+
 	u.logger.LogDebug("XMPP user sent message to channel", "user_id", u.id, "channel_id", channelID)
 	return nil
 }
@@ -183,43 +183,43 @@ func (u *XMPPUser) SendMessageToChannel(channelID, message string) error {
 // Connection lifecycle
 func (u *XMPPUser) Connect() error {
 	u.logger.LogDebug("Connecting XMPP user", "user_id", u.id, "jid", u.jid)
-	
+
 	err := u.client.Connect()
 	if err != nil {
 		u.connected.Store(false)
 		return fmt.Errorf("failed to connect XMPP user %s: %w", u.id, err)
 	}
-	
+
 	u.connected.Store(true)
 	u.logger.LogInfo("XMPP user connected", "user_id", u.id, "jid", u.jid)
-	
+
 	// Set online presence after successful connection
 	if err := u.client.SetOnlinePresence(); err != nil {
 		u.logger.LogWarn("Failed to set online presence for XMPP user", "user_id", u.id, "error", err)
 		// Don't fail the connection for presence issues
 	}
-	
+
 	// Update state to online
 	_ = u.SetState(model.UserStateOnline)
-	
+
 	return nil
 }
 
 func (u *XMPPUser) Disconnect() error {
 	u.logger.LogDebug("Disconnecting XMPP user", "user_id", u.id, "jid", u.jid)
-	
+
 	if u.client == nil {
 		return nil
 	}
-	
+
 	err := u.client.Disconnect()
 	if err != nil {
 		u.logger.LogWarn("Error disconnecting XMPP user", "user_id", u.id, "error", err)
 	}
-	
+
 	u.connected.Store(false)
 	_ = u.SetState(model.UserStateOffline)
-	
+
 	u.logger.LogInfo("XMPP user disconnected", "user_id", u.id, "jid", u.jid)
 	return err
 }
@@ -232,11 +232,11 @@ func (u *XMPPUser) Ping() error {
 	if !u.connected.Load() {
 		return fmt.Errorf("XMPP user %s is not connected", u.id)
 	}
-	
+
 	if u.client == nil {
 		return fmt.Errorf("XMPP client not initialized for user %s", u.id)
 	}
-	
+
 	return u.client.Ping()
 }
 
@@ -245,46 +245,46 @@ func (u *XMPPUser) CheckChannelExists(channelID string) (bool, error) {
 	if !u.connected.Load() {
 		return false, fmt.Errorf("XMPP user %s is not connected", u.id)
 	}
-	
+
 	if u.client == nil {
 		return false, fmt.Errorf("XMPP client not initialized for user %s", u.id)
 	}
-	
+
 	return u.client.CheckRoomExists(channelID)
 }
 
 // Goroutine lifecycle
 func (u *XMPPUser) Start(ctx context.Context) error {
 	u.logger.LogDebug("Starting XMPP user", "user_id", u.id, "jid", u.jid)
-	
+
 	// Update context
 	u.ctx = ctx
-	
+
 	// Connect to XMPP server
 	if err := u.Connect(); err != nil {
 		return fmt.Errorf("failed to start XMPP user %s: %w", u.id, err)
 	}
-	
+
 	// Start connection monitoring in a goroutine
 	go u.connectionMonitor()
-	
+
 	u.logger.LogInfo("XMPP user started", "user_id", u.id, "jid", u.jid)
 	return nil
 }
 
 func (u *XMPPUser) Stop() error {
 	u.logger.LogDebug("Stopping XMPP user", "user_id", u.id, "jid", u.jid)
-	
+
 	// Cancel context to stop goroutines
 	if u.cancel != nil {
 		u.cancel()
 	}
-	
+
 	// Disconnect from XMPP server
 	if err := u.Disconnect(); err != nil {
 		u.logger.LogWarn("Error disconnecting XMPP user during stop", "user_id", u.id, "error", err)
 	}
-	
+
 	u.logger.LogInfo("XMPP user stopped", "user_id", u.id, "jid", u.jid)
 	return nil
 }
@@ -292,7 +292,7 @@ func (u *XMPPUser) Stop() error {
 // connectionMonitor monitors the XMPP connection for this user
 func (u *XMPPUser) connectionMonitor() {
 	u.logger.LogDebug("Starting connection monitor for XMPP user", "user_id", u.id)
-	
+
 	// Simple monitoring - check connection periodically
 	for {
 		select {
@@ -306,13 +306,13 @@ func (u *XMPPUser) connectionMonitor() {
 					u.logger.LogWarn("Connection check failed for XMPP user", "user_id", u.id, "error", err)
 					u.connected.Store(false)
 					_ = u.SetState(model.UserStateOffline)
-					
+
 					// TODO: Implement reconnection logic if needed
 				}
 			}
-			
+
 			// Wait before next check
-			timeoutCtx, cancel := context.WithTimeout(u.ctx, 30 * time.Second) // 30 seconds
+			timeoutCtx, cancel := context.WithTimeout(u.ctx, 30*time.Second) // 30 seconds
 			select {
 			case <-u.ctx.Done():
 				cancel()

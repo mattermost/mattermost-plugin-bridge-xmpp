@@ -194,13 +194,13 @@ func (u *MattermostUser) Ping() error {
 	if u.api == nil {
 		return fmt.Errorf("Mattermost API not initialized for user %s", u.id)
 	}
-	
+
 	// Test API connectivity by getting server version
 	version := u.api.GetServerVersion()
 	if version == "" {
 		return fmt.Errorf("Mattermost API ping returned empty server version for user %s", u.id)
 	}
-	
+
 	return nil
 }
 
@@ -209,7 +209,7 @@ func (u *MattermostUser) CheckChannelExists(channelID string) (bool, error) {
 	if u.api == nil {
 		return false, fmt.Errorf("Mattermost API not initialized for user %s", u.id)
 	}
-	
+
 	// Try to get the channel by ID
 	_, appErr := u.api.GetChannel(channelID)
 	if appErr != nil {
@@ -219,7 +219,7 @@ func (u *MattermostUser) CheckChannelExists(channelID string) (bool, error) {
 		}
 		return false, fmt.Errorf("failed to check channel existence: %w", appErr)
 	}
-	
+
 	return true, nil
 }
 

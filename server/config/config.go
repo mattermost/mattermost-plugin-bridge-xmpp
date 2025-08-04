@@ -19,13 +19,13 @@ const DefaultXMPPUsernamePrefix = "xmpp"
 // If you add non-reference types to your configuration struct, be sure to rewrite Clone as a deep
 // copy appropriate for your types.
 type Configuration struct {
-	XMPPServerURL               string `json:"XMPPServerURL"`
-	XMPPUsername                string `json:"XMPPUsername"`
-	XMPPPassword                string `json:"XMPPPassword"`
-	EnableSync                  bool   `json:"EnableSync"`
-	XMPPUsernamePrefix          string `json:"XMPPUsernamePrefix"`
-	XMPPResource                string `json:"XMPPResource"`
-	XMPPInsecureSkipVerify      bool   `json:"XMPPInsecureSkipVerify"`
+	XMPPServerURL          string `json:"XMPPServerURL"`
+	XMPPUsername           string `json:"XMPPUsername"`
+	XMPPPassword           string `json:"XMPPPassword"`
+	EnableSync             bool   `json:"EnableSync"`
+	XMPPUsernamePrefix     string `json:"XMPPUsernamePrefix"`
+	XMPPResource           string `json:"XMPPResource"`
+	XMPPInsecureSkipVerify bool   `json:"XMPPInsecureSkipVerify"`
 }
 
 // Equals compares two configuration structs
