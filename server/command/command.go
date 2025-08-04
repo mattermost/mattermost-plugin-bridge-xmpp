@@ -160,15 +160,15 @@ func (c *Handler) executeMapCommand(args *model.CommandArgs, fields []string) *m
 	}
 
 	// Create the mapping using BridgeManager
-	mappingReq := pluginModel.ChannelMappingRequest{
+	mappingReq := pluginModel.CreateChannelMappingRequest{
 		ChannelID:    channelID,
 		BridgeName:   "xmpp",
 		BridgeRoomID: roomJID,
 		UserID:       args.UserId,
 		TeamID:       args.TeamId,
 	}
-	
-	err = c.bridgeManager.OnChannelMappingCreated(mappingReq)
+
+	err = c.bridgeManager.CreateChannelMapping(mappingReq)
 	if err != nil {
 		return c.formatMappingError("create", roomJID, err)
 	}
@@ -208,14 +208,14 @@ func (c *Handler) executeUnmapCommand(args *model.CommandArgs) *model.CommandRes
 	}
 
 	// Delete the mapping
-	deleteReq := pluginModel.ChannelMappingDeleteRequest{
+	deleteReq := pluginModel.DeleteChannelMappingRequest{
 		ChannelID:  channelID,
 		BridgeName: "xmpp",
 		UserID:     args.UserId,
 		TeamID:     args.TeamId,
 	}
-	
-	err = c.bridgeManager.OnChannelMappingDeleted(deleteReq)
+
+	err = c.bridgeManager.DeleteChannepMapping(deleteReq)
 	if err != nil {
 		return c.formatMappingError("delete", roomJID, err)
 	}
@@ -279,14 +279,14 @@ func (c *Handler) isSystemAdmin(userID string) bool {
 		c.client.Log.Warn("Failed to get user for admin check", "user_id", userID, "error", err)
 		return false
 	}
-	
+
 	return user.IsSystemAdmin()
 }
 
 // formatMappingError provides user-friendly error messages for mapping operations
 func (c *Handler) formatMappingError(operation, roomJID string, err error) *model.CommandResponse {
 	errorMsg := err.Error()
-	
+
 	// Handle specific error cases with user-friendly messages
 	switch {
 	case strings.Contains(errorMsg, "already mapped to channel"):
@@ -298,10 +298,10 @@ The XMPP room **%s** is already connected to another channel.
 
 **What you can do:**
 - Choose a different XMPP room that isn't already in use
-- Unmap the room from the other channel first using ` + "`/xmppbridge unmap`" + `
-- Use ` + "`/xmppbridge status`" + ` to check current mappings`, roomJID),
+- Unmap the room from the other channel first using `+"`/xmppbridge unmap`"+`
+- Use `+"`/xmppbridge status`"+` to check current mappings`, roomJID),
 		}
-		
+
 	case strings.Contains(errorMsg, "does not exist"):
 		return &model.CommandResponse{
 			ResponseType: model.CommandResponseTypeEphemeral,
@@ -317,7 +317,7 @@ The XMPP room **%s** doesn't exist or isn't accessible.
 
 **Example format:** room@conference.example.com`, roomJID),
 		}
-		
+
 	case strings.Contains(errorMsg, "not connected"):
 		return &model.CommandResponse{
 			ResponseType: model.CommandResponseTypeEphemeral,
@@ -330,14 +330,14 @@ The XMPP bridge is currently disconnected.
 - Contact your system administrator
 - Use ` + "`/xmppbridge status`" + ` to check the connection status`,
 		}
-		
+
 	default:
 		// Generic error message for unknown cases
 		action := "create the mapping"
 		if operation == "delete" {
 			action = "remove the mapping"
 		}
-		
+
 		return &model.CommandResponse{
 			ResponseType: model.CommandResponseTypeEphemeral,
 			Text: fmt.Sprintf(`❌ **Operation Failed**
@@ -346,7 +346,7 @@ Unable to %s for room **%s**.
 
 **What you can do:**
 - Try the command again in a few moments
-- Use ` + "`/xmppbridge status`" + ` to check the bridge status
+- Use `+"`/xmppbridge status`"+` to check the bridge status
 - Contact your system administrator if the problem persists
 
 **Error details:** %s`, action, roomJID, errorMsg),

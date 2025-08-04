@@ -13,8 +13,8 @@ const (
 	UserStateOffline
 )
 
-// ChannelMappingRequest contains information needed to create a channel mapping
-type ChannelMappingRequest struct {
+// CreateChannelMappingRequest contains information needed to create a channel mapping
+type CreateChannelMappingRequest struct {
 	ChannelID    string // Mattermost channel ID
 	BridgeName   string // Name of the bridge (e.g., "xmpp")
 	BridgeRoomID string // Remote room/channel ID (e.g., JID for XMPP)
@@ -23,7 +23,7 @@ type ChannelMappingRequest struct {
 }
 
 // Validate checks if all required fields are present and valid
-func (r ChannelMappingRequest) Validate() error {
+func (r CreateChannelMappingRequest) Validate() error {
 	if r.ChannelID == "" {
 		return fmt.Errorf("channelID cannot be empty")
 	}
@@ -42,8 +42,8 @@ func (r ChannelMappingRequest) Validate() error {
 	return nil
 }
 
-// ChannelMappingDeleteRequest contains information needed to delete a channel mapping
-type ChannelMappingDeleteRequest struct {
+// DeleteChannelMappingRequest contains information needed to delete a channel mapping
+type DeleteChannelMappingRequest struct {
 	ChannelID  string // Mattermost channel ID
 	BridgeName string // Name of the bridge (e.g., "xmpp")
 	UserID     string // ID of user who triggered the mapping deletion
@@ -51,7 +51,7 @@ type ChannelMappingDeleteRequest struct {
 }
 
 // Validate checks if all required fields are present and valid
-func (r ChannelMappingDeleteRequest) Validate() error {
+func (r DeleteChannelMappingRequest) Validate() error {
 	if r.ChannelID == "" {
 		return fmt.Errorf("channelID cannot be empty")
 	}
@@ -107,11 +107,11 @@ type BridgeManager interface {
 	// attempt updating all bridges.
 	OnPluginConfigurationChange(config any) error
 
-	// OnChannelMappingCreated is called when a channel mapping is created.
-	OnChannelMappingCreated(req ChannelMappingRequest) error
+	// CreateChannelMapping is called when a channel mapping is created.
+	CreateChannelMapping(req CreateChannelMappingRequest) error
 
-	// OnChannelMappingDeleted is called when a channel mapping is deleted.
-	OnChannelMappingDeleted(req ChannelMappingDeleteRequest) error
+	// DeleteChannepMapping is called when a channel mapping is deleted.
+	DeleteChannepMapping(req DeleteChannelMappingRequest) error
 }
 
 type Bridge interface {
@@ -141,6 +141,9 @@ type Bridge interface {
 
 	// IsConnected checks if the bridge is connected to the remote service.
 	IsConnected() bool
+
+	// Ping actively tests the bridge connection health by sending a lightweight request.
+	Ping() error
 }
 
 type BridgeUserManager interface {

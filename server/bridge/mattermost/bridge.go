@@ -57,12 +57,11 @@ func (b *mattermostBridge) UpdateConfiguration(newConfig any) error {
 	}
 
 	b.configMu.Lock()
-	oldConfig := b.config
 	b.config = cfg
 	b.configMu.Unlock()
 
 	// Log the configuration change
-	b.logger.LogInfo("Mattermost bridge configuration updated", "old_config", oldConfig, "new_config", cfg)
+	b.logger.LogInfo("Mattermost bridge configuration updated")
 
 	return nil
 }
@@ -172,6 +171,30 @@ func (b *mattermostBridge) getAllChannelMappings() (map[string]string, error) {
 func (b *mattermostBridge) IsConnected() bool {
 	// Mattermost bridge is always "connected" since it runs within Mattermost
 	return b.connected.Load()
+}
+
+// Ping actively tests the Mattermost API connectivity
+func (b *mattermostBridge) Ping() error {
+	if !b.connected.Load() {
+		return fmt.Errorf("Mattermost bridge is not connected")
+	}
+
+	if b.api == nil {
+		return fmt.Errorf("Mattermost API not initialized")
+	}
+
+	b.logger.LogDebug("Testing Mattermost bridge connectivity with API ping")
+
+	// Test API connectivity with a lightweight call
+	// Using GetServerVersion as it's a simple, read-only operation
+	version := b.api.GetServerVersion()
+	if version == "" {
+		b.logger.LogWarn("Mattermost bridge ping returned empty version")
+		return fmt.Errorf("Mattermost API ping returned empty server version")
+	}
+
+	b.logger.LogDebug("Mattermost bridge ping successful", "server_version", version)
+	return nil
 }
 
 // CreateChannelMapping creates a mapping between a Mattermost channel and another Mattermost room/channel

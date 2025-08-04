@@ -24,19 +24,19 @@ type Client struct {
 	username     string
 	password     string
 	resource     string
-	remoteID     string      // Plugin remote ID for metadata
-	serverDomain string      // explicit server domain for testing
-	tlsConfig    *tls.Config // custom TLS configuration
+	remoteID     string        // Plugin remote ID for metadata
+	serverDomain string        // explicit server domain for testing
+	tlsConfig    *tls.Config   // custom TLS configuration
 	logger       logger.Logger // Logger for debugging
 
 	// XMPP connection
-	session       *xmpp.Session
-	jidAddr       jid.JID
-	ctx           context.Context
-	cancel        context.CancelFunc
-	mucClient     *muc.Client
-	mux           *mux.ServeMux
-	sessionReady  chan struct{}
+	session        *xmpp.Session
+	jidAddr        jid.JID
+	ctx            context.Context
+	cancel         context.CancelFunc
+	mucClient      *muc.Client
+	mux            *mux.ServeMux
+	sessionReady   chan struct{}
 	sessionServing bool
 }
 
@@ -87,7 +87,7 @@ func NewClient(serverURL, username, password, resource, remoteID string, logger 
 	ctx, cancel := context.WithCancel(context.Background())
 	mucClient := &muc.Client{}
 	mux := mux.New("jabber:client", muc.HandleClient(mucClient))
-	
+
 	return &Client{
 		serverURL:    serverURL,
 		username:     username,
@@ -183,11 +183,11 @@ func (c *Client) serveSession() {
 		close(c.sessionReady) // Signal failure
 		return
 	}
-	
+
 	// Signal that the session is ready to serve
 	c.sessionServing = true
 	close(c.sessionReady)
-	
+
 	err := c.session.Serve(c.mux)
 	if err != nil {
 		c.sessionServing = false
@@ -216,23 +216,6 @@ func (c *Client) Disconnect() error {
 
 	if c.cancel != nil {
 		c.cancel()
-	}
-
-	return nil
-}
-
-// TestConnection tests the XMPP connection
-func (c *Client) TestConnection() error {
-	if c.session == nil {
-		if err := c.Connect(); err != nil {
-			return err
-		}
-	}
-
-	// For now, just check if session exists and is not closed
-	// A proper ping implementation would require more complex IQ handling
-	if c.session == nil {
-		return fmt.Errorf("XMPP session is not established")
 	}
 
 	return nil
@@ -270,7 +253,7 @@ func (c *Client) JoinRoom(roomJID string) error {
 	opts := []muc.Option{
 		muc.MaxBytes(0), // Don't limit message history
 	}
-	
+
 	// Run the join operation in a goroutine to avoid blocking
 	errChan := make(chan error, 1)
 	go func() {
@@ -459,7 +442,7 @@ func (c *Client) CheckRoomExists(roomJID string) (bool, error) {
 	if err != nil {
 		// Check if it's a service-unavailable or item-not-found error
 		if stanzaErr, ok := err.(stanza.Error); ok {
-			c.logger.LogDebug("Received stanza error during disco#info query", 
+			c.logger.LogDebug("Received stanza error during disco#info query",
 				"room_jid", roomJID,
 				"error_condition", string(stanzaErr.Condition),
 				"error_type", string(stanzaErr.Type))
@@ -483,7 +466,7 @@ func (c *Client) CheckRoomExists(roomJID string) (bool, error) {
 		return false, fmt.Errorf("disco query error: %w", err)
 	}
 
-	c.logger.LogDebug("Received disco#info response, checking for MUC features", 
+	c.logger.LogDebug("Received disco#info response, checking for MUC features",
 		"room_jid", roomJID,
 		"features_count", len(info.Features),
 		"identities_count", len(info.Identity))
@@ -505,7 +488,7 @@ func (c *Client) CheckRoomExists(roomJID string) (bool, error) {
 	}
 
 	// Log all features and identities for debugging
-	c.logger.LogDebug("Room exists but doesn't appear to be a MUC room", 
+	c.logger.LogDebug("Room exists but doesn't appear to be a MUC room",
 		"room_jid", roomJID,
 		"features", func() []string {
 			var features []string
@@ -523,4 +506,32 @@ func (c *Client) CheckRoomExists(roomJID string) (bool, error) {
 		}())
 
 	return false, nil
+}
+
+// Ping sends a lightweight ping to the XMPP server to test connectivity
+func (c *Client) Ping() error {
+	if c.session == nil {
+		return fmt.Errorf("XMPP session not established")
+	}
+
+	c.logger.LogDebug("Sending XMPP ping to test connectivity")
+
+	// Create a context with timeout for the ping
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	start := time.Now()
+
+	// Use disco#info query to server domain as a connectivity test
+	// This is a standard, lightweight XMPP operation that all servers support
+	_, err := disco.GetInfo(ctx, "", c.jidAddr.Domain(), c.session)
+	if err != nil {
+		duration := time.Since(start)
+		c.logger.LogDebug("XMPP ping failed", "error", err, "duration", duration)
+		return fmt.Errorf("XMPP server ping failed: %w", err)
+	}
+
+	duration := time.Since(start)
+	c.logger.LogDebug("XMPP ping successful", "duration", duration)
+	return nil
 }

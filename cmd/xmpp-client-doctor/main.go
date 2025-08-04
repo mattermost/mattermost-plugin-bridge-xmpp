@@ -165,7 +165,7 @@ func testXMPPClient(config *Config) error {
 
 	// Test connection health
 	start = time.Now()
-	err = client.TestConnection()
+	err = client.Ping()
 	if err != nil {
 		return fmt.Errorf("connection health test failed: %w", err)
 	}

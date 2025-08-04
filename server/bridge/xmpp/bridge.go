@@ -87,11 +87,13 @@ func (b *xmppBridge) UpdateConfiguration(newConfig any) error {
 	b.configMu.Lock()
 	oldConfig := b.config
 	b.config = cfg
+	defer b.configMu.Unlock()
+
+	b.logger.LogInfo("XMPP bridge configuration updated")
 
 	// Initialize or update XMPP client with new configuration
 	if cfg.EnableSync {
 		if cfg.XMPPServerURL == "" || cfg.XMPPUsername == "" || cfg.XMPPPassword == "" {
-			b.configMu.Unlock()
 			return fmt.Errorf("XMPP server URL, username, and password are required when sync is enabled")
 		}
 
@@ -99,8 +101,6 @@ func (b *xmppBridge) UpdateConfiguration(newConfig any) error {
 	} else {
 		b.xmppClient = nil
 	}
-
-	b.configMu.Unlock()
 
 	// Check if we need to restart the bridge due to configuration changes
 	wasConnected := b.connected.Load()
@@ -322,7 +322,7 @@ func (b *xmppBridge) checkConnection() error {
 	if !b.connected.Load() {
 		return fmt.Errorf("not connected")
 	}
-	return b.xmppClient.TestConnection()
+	return b.xmppClient.Ping()
 }
 
 // handleReconnection attempts to reconnect to XMPP and rejoin rooms
@@ -374,6 +374,28 @@ func (b *xmppBridge) handleReconnection() {
 // IsConnected returns whether the bridge is connected to XMPP
 func (b *xmppBridge) IsConnected() bool {
 	return b.connected.Load()
+}
+
+// Ping actively tests the XMPP connection health
+func (b *xmppBridge) Ping() error {
+	if !b.connected.Load() {
+		return fmt.Errorf("XMPP bridge is not connected")
+	}
+
+	if b.xmppClient == nil {
+		return fmt.Errorf("XMPP client not initialized")
+	}
+
+	b.logger.LogDebug("Testing XMPP bridge connectivity with ping")
+
+	// Use the XMPP client's ping method
+	if err := b.xmppClient.Ping(); err != nil {
+		b.logger.LogWarn("XMPP bridge ping failed", "error", err)
+		return fmt.Errorf("XMPP bridge ping failed: %w", err)
+	}
+
+	b.logger.LogDebug("XMPP bridge ping successful")
+	return nil
 }
 
 // CreateChannelMapping creates a mapping between a Mattermost channel and XMPP room
@@ -514,6 +536,6 @@ func (b *xmppBridge) GetRoomMapping(roomID string) (string, error) {
 
 	channelID := string(channelIDBytes)
 	b.logger.LogDebug("Found channel mapping for room", "room_jid", roomID, "channel_id", channelID)
-	
+
 	return channelID, nil
 }

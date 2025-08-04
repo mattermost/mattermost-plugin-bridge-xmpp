@@ -224,8 +224,8 @@ func (m *Manager) OnPluginConfigurationChange(config any) error {
 	return nil
 }
 
-// OnChannelMappingCreated handles the creation of a channel mapping by calling the appropriate bridge
-func (m *Manager) OnChannelMappingCreated(req model.ChannelMappingRequest) error {
+// CreateChannelMapping handles the creation of a channel mapping by calling the appropriate bridge
+func (m *Manager) CreateChannelMapping(req model.CreateChannelMappingRequest) error {
 	// Validate request
 	if err := req.Validate(); err != nil {
 		return fmt.Errorf("invalid mapping request: %w", err)
@@ -252,9 +252,9 @@ func (m *Manager) OnChannelMappingCreated(req model.ChannelMappingRequest) error
 		return fmt.Errorf("failed to check room mapping: %w", err)
 	}
 	if existingChannelID != "" {
-		m.logger.LogWarn("Room already mapped to another channel", 
-			"bridge_room_id", req.BridgeRoomID, 
-			"existing_channel_id", existingChannelID, 
+		m.logger.LogWarn("Room already mapped to another channel",
+			"bridge_room_id", req.BridgeRoomID,
+			"existing_channel_id", existingChannelID,
 			"requested_channel_id", req.ChannelID)
 		return fmt.Errorf("room '%s' is already mapped to channel '%s'", req.BridgeRoomID, existingChannelID)
 	}
@@ -266,14 +266,14 @@ func (m *Manager) OnChannelMappingCreated(req model.ChannelMappingRequest) error
 		return fmt.Errorf("failed to check room existence: %w", err)
 	}
 	if !roomExists {
-		m.logger.LogWarn("Room does not exist on bridge", 
-			"bridge_room_id", req.BridgeRoomID, 
+		m.logger.LogWarn("Room does not exist on bridge",
+			"bridge_room_id", req.BridgeRoomID,
 			"bridge_name", req.BridgeName)
 		return fmt.Errorf("room '%s' does not exist on %s bridge", req.BridgeRoomID, req.BridgeName)
 	}
 
-	m.logger.LogDebug("Room validation passed", 
-		"bridge_room_id", req.BridgeRoomID, 
+	m.logger.LogDebug("Room validation passed",
+		"bridge_room_id", req.BridgeRoomID,
 		"bridge_name", req.BridgeName,
 		"room_exists", roomExists,
 		"already_mapped", false)
@@ -307,8 +307,8 @@ func (m *Manager) OnChannelMappingCreated(req model.ChannelMappingRequest) error
 	return nil
 }
 
-// OnChannelMappingDeleted handles the deletion of a channel mapping by calling the appropriate bridges
-func (m *Manager) OnChannelMappingDeleted(req model.ChannelMappingDeleteRequest) error {
+// DeleteChannepMapping handles the deletion of a channel mapping by calling the appropriate bridges
+func (m *Manager) DeleteChannepMapping(req model.DeleteChannelMappingRequest) error {
 	// Validate request
 	if err := req.Validate(); err != nil {
 		return fmt.Errorf("invalid delete request: %w", err)
@@ -359,7 +359,7 @@ func (m *Manager) OnChannelMappingDeleted(req model.ChannelMappingDeleteRequest)
 }
 
 // shareChannel creates a shared channel configuration using the Mattermost API
-func (m *Manager) shareChannel(req model.ChannelMappingRequest) error {
+func (m *Manager) shareChannel(req model.CreateChannelMappingRequest) error {
 	if m.remoteID == "" {
 		return fmt.Errorf("remote ID not set - plugin not registered for shared channels")
 	}
