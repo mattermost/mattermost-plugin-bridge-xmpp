@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/bridge"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/config"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
 	pluginModel "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
@@ -15,9 +16,10 @@ import (
 
 // mattermostBridge handles syncing messages between Mattermost instances
 type mattermostBridge struct {
-	logger  logger.Logger
-	api     plugin.API
-	kvstore kvstore.KVStore
+	logger      logger.Logger
+	api         plugin.API
+	kvstore     kvstore.KVStore
+	userManager pluginModel.BridgeUserManager
 
 	// Connection management
 	connected atomic.Bool
@@ -44,6 +46,7 @@ func NewBridge(log logger.Logger, api plugin.API, kvstore kvstore.KVStore, cfg *
 		cancel:          cancel,
 		channelMappings: make(map[string]string),
 		config:          cfg,
+		userManager:     bridge.NewUserManager("mattermost", log),
 	}
 
 	return bridge
@@ -327,4 +330,9 @@ func (b *mattermostBridge) GetRoomMapping(roomID string) (string, error) {
 	b.logger.LogDebug("Found channel mapping for room", "room_id", roomID, "channel_id", channelID)
 
 	return channelID, nil
+}
+
+// GetUserManager returns the user manager for this bridge
+func (b *mattermostBridge) GetUserManager() pluginModel.BridgeUserManager {
+	return b.userManager
 }

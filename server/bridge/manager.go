@@ -10,8 +10,8 @@ import (
 	"github.com/mattermost/mattermost/server/public/plugin"
 )
 
-// Manager manages multiple bridge instances
-type Manager struct {
+// BridgeManager manages multiple bridge instances
+type BridgeManager struct {
 	bridges  map[string]model.Bridge
 	mu       sync.RWMutex
 	logger   logger.Logger
@@ -19,8 +19,8 @@ type Manager struct {
 	remoteID string
 }
 
-// NewManager creates a new bridge manager
-func NewManager(logger logger.Logger, api plugin.API, remoteID string) model.BridgeManager {
+// NewBridgeManager creates a new bridge manager
+func NewBridgeManager(logger logger.Logger, api plugin.API, remoteID string) model.BridgeManager {
 	if logger == nil {
 		panic("logger cannot be nil")
 	}
@@ -28,7 +28,7 @@ func NewManager(logger logger.Logger, api plugin.API, remoteID string) model.Bri
 		panic("plugin API cannot be nil")
 	}
 
-	return &Manager{
+	return &BridgeManager{
 		bridges:  make(map[string]model.Bridge),
 		logger:   logger,
 		api:      api,
@@ -37,7 +37,7 @@ func NewManager(logger logger.Logger, api plugin.API, remoteID string) model.Bri
 }
 
 // RegisterBridge registers a bridge with the manager
-func (m *Manager) RegisterBridge(name string, bridge model.Bridge) error {
+func (m *BridgeManager) RegisterBridge(name string, bridge model.Bridge) error {
 	if name == "" {
 		return fmt.Errorf("bridge name cannot be empty")
 	}
@@ -59,7 +59,7 @@ func (m *Manager) RegisterBridge(name string, bridge model.Bridge) error {
 }
 
 // StartBridge starts a specific bridge
-func (m *Manager) StartBridge(name string) error {
+func (m *BridgeManager) StartBridge(name string) error {
 	m.mu.RLock()
 	bridge, exists := m.bridges[name]
 	m.mu.RUnlock()
@@ -80,7 +80,7 @@ func (m *Manager) StartBridge(name string) error {
 }
 
 // StopBridge stops a specific bridge
-func (m *Manager) StopBridge(name string) error {
+func (m *BridgeManager) StopBridge(name string) error {
 	m.mu.RLock()
 	bridge, exists := m.bridges[name]
 	m.mu.RUnlock()
@@ -101,7 +101,7 @@ func (m *Manager) StopBridge(name string) error {
 }
 
 // UnregisterBridge removes a bridge from the manager
-func (m *Manager) UnregisterBridge(name string) error {
+func (m *BridgeManager) UnregisterBridge(name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -124,7 +124,7 @@ func (m *Manager) UnregisterBridge(name string) error {
 }
 
 // GetBridge retrieves a bridge by name
-func (m *Manager) GetBridge(name string) (model.Bridge, error) {
+func (m *BridgeManager) GetBridge(name string) (model.Bridge, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -137,7 +137,7 @@ func (m *Manager) GetBridge(name string) (model.Bridge, error) {
 }
 
 // ListBridges returns a list of all registered bridge names
-func (m *Manager) ListBridges() []string {
+func (m *BridgeManager) ListBridges() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -150,7 +150,7 @@ func (m *Manager) ListBridges() []string {
 }
 
 // HasBridge checks if a bridge with the given name is registered
-func (m *Manager) HasBridge(name string) bool {
+func (m *BridgeManager) HasBridge(name string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -159,7 +159,7 @@ func (m *Manager) HasBridge(name string) bool {
 }
 
 // HasBridges checks if any bridges are registered
-func (m *Manager) HasBridges() bool {
+func (m *BridgeManager) HasBridges() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -167,7 +167,7 @@ func (m *Manager) HasBridges() bool {
 }
 
 // Shutdown stops and unregisters all bridges
-func (m *Manager) Shutdown() error {
+func (m *BridgeManager) Shutdown() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -196,7 +196,7 @@ func (m *Manager) Shutdown() error {
 }
 
 // OnPluginConfigurationChange propagates configuration changes to all registered bridges
-func (m *Manager) OnPluginConfigurationChange(config any) error {
+func (m *BridgeManager) OnPluginConfigurationChange(config any) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -225,7 +225,7 @@ func (m *Manager) OnPluginConfigurationChange(config any) error {
 }
 
 // CreateChannelMapping handles the creation of a channel mapping by calling the appropriate bridge
-func (m *Manager) CreateChannelMapping(req model.CreateChannelMappingRequest) error {
+func (m *BridgeManager) CreateChannelMapping(req model.CreateChannelMappingRequest) error {
 	// Validate request
 	if err := req.Validate(); err != nil {
 		return fmt.Errorf("invalid mapping request: %w", err)
@@ -308,7 +308,7 @@ func (m *Manager) CreateChannelMapping(req model.CreateChannelMappingRequest) er
 }
 
 // DeleteChannepMapping handles the deletion of a channel mapping by calling the appropriate bridges
-func (m *Manager) DeleteChannepMapping(req model.DeleteChannelMappingRequest) error {
+func (m *BridgeManager) DeleteChannepMapping(req model.DeleteChannelMappingRequest) error {
 	// Validate request
 	if err := req.Validate(); err != nil {
 		return fmt.Errorf("invalid delete request: %w", err)
@@ -359,7 +359,7 @@ func (m *Manager) DeleteChannepMapping(req model.DeleteChannelMappingRequest) er
 }
 
 // shareChannel creates a shared channel configuration using the Mattermost API
-func (m *Manager) shareChannel(req model.CreateChannelMappingRequest) error {
+func (m *BridgeManager) shareChannel(req model.CreateChannelMappingRequest) error {
 	if m.remoteID == "" {
 		return fmt.Errorf("remote ID not set - plugin not registered for shared channels")
 	}
@@ -389,7 +389,7 @@ func (m *Manager) shareChannel(req model.CreateChannelMappingRequest) error {
 }
 
 // unshareChannel removes shared channel configuration using the Mattermost API
-func (m *Manager) unshareChannel(channelID string) error {
+func (m *BridgeManager) unshareChannel(channelID string) error {
 	// Unshare the channel
 	unshared, err := m.api.UnshareChannel(channelID)
 	if err != nil {

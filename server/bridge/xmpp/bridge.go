@@ -2,27 +2,28 @@ package xmpp
 
 import (
 	"context"
-	"crypto/tls"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"fmt"
 
+	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/bridge"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/config"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
+	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
 	pluginModel "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/store/kvstore"
-	xmppClient "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/xmpp"
 	"github.com/mattermost/mattermost/server/public/plugin"
 )
 
 // xmppBridge handles syncing messages between Mattermost and XMPP
 type xmppBridge struct {
-	logger     logger.Logger
-	api        plugin.API
-	kvstore    kvstore.KVStore
-	xmppClient *xmppClient.Client
+	logger      logger.Logger
+	api         plugin.API
+	kvstore     kvstore.KVStore
+	bridgeUser  model.BridgeUser // Handles the bridge user and main bridge XMPP connection
+	userManager pluginModel.BridgeUserManager
 
 	// Connection management
 	connected atomic.Bool
@@ -41,7 +42,7 @@ type xmppBridge struct {
 // NewBridge creates a new XMPP bridge
 func NewBridge(log logger.Logger, api plugin.API, kvstore kvstore.KVStore, cfg *config.Configuration) pluginModel.Bridge {
 	ctx, cancel := context.WithCancel(context.Background())
-	bridge := &xmppBridge{
+	b := &xmppBridge{
 		logger:          log,
 		api:             api,
 		kvstore:         kvstore,
@@ -49,32 +50,20 @@ func NewBridge(log logger.Logger, api plugin.API, kvstore kvstore.KVStore, cfg *
 		cancel:          cancel,
 		channelMappings: make(map[string]string),
 		config:          cfg,
+		userManager:     bridge.NewUserManager("xmpp", log),
 	}
 
 	// Initialize XMPP client with configuration
 	if cfg.EnableSync && cfg.XMPPServerURL != "" && cfg.XMPPUsername != "" && cfg.XMPPPassword != "" {
-		bridge.xmppClient = bridge.createXMPPClient(cfg)
+		b.bridgeUser = b.createXMPPClient(cfg)
 	}
 
-	return bridge
+	return b
 }
 
 // createXMPPClient creates an XMPP client with the given configuration
-func (b *xmppBridge) createXMPPClient(cfg *config.Configuration) *xmppClient.Client {
-	// Create TLS config based on certificate verification setting
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: cfg.XMPPInsecureSkipVerify,
-	}
-
-	return xmppClient.NewClientWithTLS(
-		cfg.XMPPServerURL,
-		cfg.XMPPUsername,
-		cfg.XMPPPassword,
-		cfg.GetXMPPResource(),
-		"", // remoteID not needed for bridge user
-		tlsConfig,
-		b.logger,
-	)
+func (b *xmppBridge) createXMPPClient(cfg *config.Configuration) model.BridgeUser {
+	return NewXMPPUser("_bridge_", "Bridge User", cfg.XMPPUsername, cfg, b.logger)
 }
 
 // UpdateConfiguration updates the bridge configuration
@@ -97,9 +86,9 @@ func (b *xmppBridge) UpdateConfiguration(newConfig any) error {
 			return fmt.Errorf("XMPP server URL, username, and password are required when sync is enabled")
 		}
 
-		b.xmppClient = b.createXMPPClient(cfg)
+		b.bridgeUser = b.createXMPPClient(cfg)
 	} else {
-		b.xmppClient = nil
+		b.bridgeUser = nil
 	}
 
 	// Check if we need to restart the bridge due to configuration changes
@@ -108,7 +97,7 @@ func (b *xmppBridge) UpdateConfiguration(newConfig any) error {
 
 	// Log the configuration change
 	if needsRestart {
-		b.logger.LogInfo("Configuration changed, restarting bridge", "old_config", oldConfig, "new_config", cfg)
+		b.logger.LogInfo("Configuration changed, restarting bridge")
 	} else {
 		b.logger.LogInfo("Configuration updated", "config", cfg)
 	}
@@ -175,8 +164,8 @@ func (b *xmppBridge) Stop() error {
 		b.cancel()
 	}
 
-	if b.xmppClient != nil {
-		if err := b.xmppClient.Disconnect(); err != nil {
+	if b.bridgeUser != nil {
+		if err := b.bridgeUser.Disconnect(); err != nil {
 			b.logger.LogWarn("Error disconnecting from XMPP server", "error", err)
 		}
 	}
@@ -188,13 +177,13 @@ func (b *xmppBridge) Stop() error {
 
 // connectToXMPP establishes connection to the XMPP server
 func (b *xmppBridge) connectToXMPP() error {
-	if b.xmppClient == nil {
+	if b.bridgeUser == nil {
 		return fmt.Errorf("XMPP client is not initialized")
 	}
 
 	b.logger.LogDebug("Connecting to XMPP server")
 
-	err := b.xmppClient.Connect()
+	err := b.bridgeUser.Connect()
 	if err != nil {
 		b.connected.Store(false)
 		return fmt.Errorf("failed to connect to XMPP server: %w", err)
@@ -204,7 +193,7 @@ func (b *xmppBridge) connectToXMPP() error {
 	b.logger.LogInfo("Successfully connected to XMPP server")
 
 	// Set online presence after successful connection
-	if err := b.xmppClient.SetOnlinePresence(); err != nil {
+	if err := b.bridgeUser.SetState(pluginModel.UserStateOnline); err != nil {
 		b.logger.LogWarn("Failed to set online presence", "error", err)
 		// Don't fail the connection for presence issues
 	} else {
@@ -247,7 +236,7 @@ func (b *xmppBridge) joinXMPPRoom(channelID, roomJID string) error {
 		return fmt.Errorf("not connected to XMPP server")
 	}
 
-	err := b.xmppClient.JoinRoom(roomJID)
+	err := b.bridgeUser.JoinChannel(roomJID)
 	if err != nil {
 		return fmt.Errorf("failed to join XMPP room: %w", err)
 	}
@@ -309,20 +298,12 @@ func (b *xmppBridge) connectionMonitor() {
 		case <-b.ctx.Done():
 			return
 		case <-ticker.C:
-			if err := b.checkConnection(); err != nil {
+			if err := b.Ping(); err != nil {
 				b.logger.LogWarn("XMPP connection check failed", "error", err)
 				b.handleReconnection()
 			}
 		}
 	}
-}
-
-// checkConnection verifies the XMPP connection is still active
-func (b *xmppBridge) checkConnection() error {
-	if !b.connected.Load() {
-		return fmt.Errorf("not connected")
-	}
-	return b.xmppClient.Ping()
 }
 
 // handleReconnection attempts to reconnect to XMPP and rejoin rooms
@@ -338,8 +319,8 @@ func (b *xmppBridge) handleReconnection() {
 	b.logger.LogInfo("Attempting to reconnect to XMPP server")
 	b.connected.Store(false)
 
-	if b.xmppClient != nil {
-		b.xmppClient.Disconnect()
+	if b.bridgeUser != nil {
+		_ = b.bridgeUser.Disconnect()
 	}
 
 	// Retry connection with exponential backoff
@@ -382,14 +363,14 @@ func (b *xmppBridge) Ping() error {
 		return fmt.Errorf("XMPP bridge is not connected")
 	}
 
-	if b.xmppClient == nil {
+	if b.bridgeUser == nil {
 		return fmt.Errorf("XMPP client not initialized")
 	}
 
 	b.logger.LogDebug("Testing XMPP bridge connectivity with ping")
 
-	// Use the XMPP client's ping method
-	if err := b.xmppClient.Ping(); err != nil {
+	// Use the XMPP user's ping method
+	if err := b.bridgeUser.Ping(); err != nil {
 		b.logger.LogWarn("XMPP bridge ping failed", "error", err)
 		return fmt.Errorf("XMPP bridge ping failed: %w", err)
 	}
@@ -416,7 +397,7 @@ func (b *xmppBridge) CreateChannelMapping(channelID, roomJID string) error {
 
 	// Join the room if connected
 	if b.connected.Load() {
-		if err := b.xmppClient.JoinRoom(roomJID); err != nil {
+		if err := b.bridgeUser.JoinChannel(roomJID); err != nil {
 			b.logger.LogWarn("Failed to join newly mapped room", "channel_id", channelID, "room_jid", roomJID, "error", err)
 		}
 	}
@@ -482,8 +463,8 @@ func (b *xmppBridge) DeleteChannelMapping(channelID string) error {
 	b.mappingsMu.Unlock()
 
 	// Leave the room if connected
-	if b.connected.Load() && b.xmppClient != nil {
-		if err := b.xmppClient.LeaveRoom(roomJID); err != nil {
+	if b.connected.Load() && b.bridgeUser != nil {
+		if err := b.bridgeUser.LeaveChannel(roomJID); err != nil {
 			b.logger.LogWarn("Failed to leave unmapped room", "channel_id", channelID, "room_jid", roomJID, "error", err)
 			// Don't fail the entire operation if leaving the room fails
 		} else {
@@ -501,14 +482,14 @@ func (b *xmppBridge) RoomExists(roomID string) (bool, error) {
 		return false, fmt.Errorf("not connected to XMPP server")
 	}
 
-	if b.xmppClient == nil {
+	if b.bridgeUser == nil {
 		return false, fmt.Errorf("XMPP client not initialized")
 	}
 
 	b.logger.LogDebug("Checking if XMPP room exists", "room_jid", roomID)
 
-	// Use the XMPP client to check room existence
-	exists, err := b.xmppClient.CheckRoomExists(roomID)
+	// Use the XMPP user to check room existence
+	exists, err := b.bridgeUser.CheckChannelExists(roomID)
 	if err != nil {
 		b.logger.LogError("Failed to check room existence", "room_jid", roomID, "error", err)
 		return false, fmt.Errorf("failed to check room existence: %w", err)
@@ -538,4 +519,9 @@ func (b *xmppBridge) GetRoomMapping(roomID string) (string, error) {
 	b.logger.LogDebug("Found channel mapping for room", "room_jid", roomID, "channel_id", channelID)
 
 	return channelID, nil
+}
+
+// GetUserManager returns the user manager for this bridge
+func (b *xmppBridge) GetUserManager() pluginModel.BridgeUserManager {
+	return b.userManager
 }

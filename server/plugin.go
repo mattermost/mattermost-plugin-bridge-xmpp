@@ -83,7 +83,7 @@ func (p *Plugin) OnActivate() error {
 	}
 
 	// Initialize bridge manager
-	p.bridgeManager = bridge.NewManager(p.logger, p.API, p.remoteID)
+	p.bridgeManager = bridge.NewBridgeManager(p.logger, p.API, p.remoteID)
 
 	// Initialize and register bridges with current configuration
 	if err := p.initBridges(*cfg); err != nil {

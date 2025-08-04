@@ -1,6 +1,11 @@
 package model
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+
+	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/config"
+)
 
 type BridgeID string
 
@@ -144,27 +149,59 @@ type Bridge interface {
 
 	// Ping actively tests the bridge connection health by sending a lightweight request.
 	Ping() error
+
+	// GetUserManager returns the user manager for this bridge.
+	GetUserManager() BridgeUserManager
 }
 
+// BridgeUser represents a user connected to any bridge service
+type BridgeUser interface {
+	// Validation
+	Validate() error
+
+	// Identity (bridge-agnostic)
+	GetID() string
+	GetDisplayName() string
+
+	// State management
+	GetState() UserState
+	SetState(state UserState) error
+
+	// Channel operations (abstracted from rooms/channels/groups)
+	JoinChannel(channelID string) error
+	LeaveChannel(channelID string) error
+	SendMessageToChannel(channelID, message string) error
+
+	// Connection lifecycle
+	Connect() error
+	Disconnect() error
+	IsConnected() bool
+	Ping() error
+
+	// Channel existence check
+	CheckChannelExists(channelID string) (bool, error)
+
+	// Goroutine lifecycle
+	Start(ctx context.Context) error
+	Stop() error
+}
+
+// BridgeUserManager manages users for a specific bridge
 type BridgeUserManager interface {
-	// CreateUser creates a new user in the bridge system.
-	CreateUser(userID string, userData any) error
-
-	// GetUser retrieves user data for a given user ID.
-	GetUser(userID string) (any, error)
-
-	// UpdateUser updates user data for a given user ID.
-	UpdateUser(userID string, userData any) error
-
-	// DeleteUser removes a user from the bridge system.
+	// User lifecycle
+	CreateUser(user BridgeUser) error
+	GetUser(userID string) (BridgeUser, error)
 	DeleteUser(userID string) error
-
-	// ListUsers returns a list of all users in the bridge system.
-	ListUsers() ([]string, error)
-
-	// HasUser checks if a user exists in the bridge system.
+	ListUsers() []BridgeUser
 	HasUser(userID string) bool
 
-	// OnUserStateChange is called when a user's state changes (e.g., online, away, offline).
-	OnUserStateChange(userID string, state UserState) error
+	// Manager lifecycle
+	Start(ctx context.Context) error
+	Stop() error
+
+	// Configuration updates
+	UpdateConfiguration(config *config.Configuration) error
+
+	// Bridge type identification
+	GetBridgeType() string
 }
