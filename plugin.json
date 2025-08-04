@@ -29,28 +29,40 @@
         "display_name": "XMPP Server URL",
         "type": "text",
         "help_text": "The URL of the XMPP server to connect to (e.g., xmpp.example.com:5222)",
-        "placeholder": "xmpp.example.com:5222"
+        "placeholder": "xmpp.example.com:5222",
+        "default": null,
+        "hosting": "",
+        "secret": false
       },
       {
         "key": "XMPPUsername",
         "display_name": "XMPP Username",
         "type": "text",
         "help_text": "The username for authenticating with the XMPP server",
-        "placeholder": "bridge@xmpp.example.com"
+        "placeholder": "bridge@xmpp.example.com",
+        "default": null,
+        "hosting": "",
+        "secret": false
       },
       {
         "key": "XMPPPassword",
         "display_name": "XMPP Password",
         "type": "text",
-        "secret": true,
-        "help_text": "The password for authenticating with the XMPP server"
+        "help_text": "The password for authenticating with the XMPP server",
+        "placeholder": "",
+        "default": null,
+        "hosting": "",
+        "secret": true
       },
       {
         "key": "EnableSync",
         "display_name": "Enable Message Synchronization",
         "type": "bool",
         "help_text": "When enabled, messages will be synchronized between Mattermost and XMPP",
-        "default": false
+        "placeholder": "",
+        "default": false,
+        "hosting": "",
+        "secret": false
       },
       {
         "key": "XMPPUsernamePrefix",
@@ -58,7 +70,9 @@
         "type": "text",
         "help_text": "Prefix for XMPP users in Mattermost (e.g., 'xmpp' creates usernames like 'xmpp:user@domain')",
         "placeholder": "xmpp",
-        "default": "xmpp"
+        "default": "xmpp",
+        "hosting": "",
+        "secret": false
       },
       {
         "key": "XMPPResource",
@@ -66,20 +80,26 @@
         "type": "text",
         "help_text": "XMPP resource identifier for the bridge client",
         "placeholder": "mattermost-bridge",
-        "default": "mattermost-bridge"
+        "default": "mattermost-bridge",
+        "hosting": "",
+        "secret": false
       },
       {
         "key": "XMPPInsecureSkipVerify",
         "display_name": "Skip TLS Certificate Verification",
         "type": "bool",
         "help_text": "Skip TLS certificate verification for XMPP connections (use only for testing/development)",
-        "default": false
+        "placeholder": "",
+        "default": false,
+        "hosting": "",
+        "secret": false
       }
-    ]
+    ],
+    "sections": null
   },
   "props": {
     "pluginctl": {
-      "version": "v0.1.1"
+      "version": "v0.1.2"
     }
   }
 }
