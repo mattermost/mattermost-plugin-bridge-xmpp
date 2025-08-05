@@ -14,15 +14,15 @@ import (
 
 // BridgeManager manages multiple bridge instances
 type BridgeManager struct {
-	bridges    map[string]model.Bridge
-	mu         sync.RWMutex
-	logger     logger.Logger
-	api        plugin.API
-	remoteID   string
-	messageBus model.MessageBus
-	routingCtx context.Context
+	bridges       map[string]model.Bridge
+	mu            sync.RWMutex
+	logger        logger.Logger
+	api           plugin.API
+	remoteID      string
+	messageBus    model.MessageBus
+	routingCtx    context.Context
 	routingCancel context.CancelFunc
-	routingWg  sync.WaitGroup
+	routingWg     sync.WaitGroup
 }
 
 // NewBridgeManager creates a new bridge manager
@@ -163,6 +163,20 @@ func (m *BridgeManager) ListBridges() []string {
 	return bridges
 }
 
+// Start starts the bridge manager and message routing system
+func (m *BridgeManager) Start() error {
+	m.logger.LogInfo("Starting bridge manager")
+
+	// Start the message routing system
+	if err := m.StartMessageRouting(); err != nil {
+		m.logger.LogError("Failed to start message routing", "error", err)
+		return fmt.Errorf("failed to start message routing: %w", err)
+	}
+
+	m.logger.LogInfo("Bridge manager started successfully")
+	return nil
+}
+
 // HasBridge checks if a bridge with the given name is registered
 func (m *BridgeManager) HasBridge(name string) bool {
 	m.mu.RLock()
@@ -186,6 +200,11 @@ func (m *BridgeManager) Shutdown() error {
 	defer m.mu.Unlock()
 
 	m.logger.LogInfo("Shutting down bridge manager", "bridge_count", len(m.bridges))
+
+	// Stop message routing first
+	if err := m.StopMessageRouting(); err != nil {
+		m.logger.LogError("Failed to stop message routing during shutdown", "error", err)
+	}
 
 	var errors []error
 	for name, bridge := range m.bridges {
@@ -260,7 +279,7 @@ func (m *BridgeManager) CreateChannelMapping(req model.CreateChannelMappingReque
 	}
 
 	// NEW: Check if room already mapped to another channel
-	existingChannelID, err := bridge.GetRoomMapping(req.BridgeRoomID)
+	existingChannelID, err := bridge.GetChannelMapping(req.BridgeRoomID)
 	if err != nil {
 		m.logger.LogError("Failed to check room mapping", "bridge_room_id", req.BridgeRoomID, "error", err)
 		return fmt.Errorf("failed to check room mapping: %w", err)
@@ -274,7 +293,7 @@ func (m *BridgeManager) CreateChannelMapping(req model.CreateChannelMappingReque
 	}
 
 	// NEW: Check if room exists on target bridge
-	roomExists, err := bridge.RoomExists(req.BridgeRoomID)
+	roomExists, err := bridge.ChannelMappingExists(req.BridgeRoomID)
 	if err != nil {
 		m.logger.LogError("Failed to check room existence", "bridge_room_id", req.BridgeRoomID, "error", err)
 		return fmt.Errorf("failed to check room existence: %w", err)
@@ -422,16 +441,16 @@ func (m *BridgeManager) unshareChannel(channelID string) error {
 // startBridgeMessageHandler starts message handling for a specific bridge
 func (m *BridgeManager) startBridgeMessageHandler(bridgeName string, bridge model.Bridge) {
 	m.logger.LogDebug("Starting message handler for bridge", "bridge", bridgeName)
-	
+
 	// Subscribe to message bus
 	messageChannel := m.messageBus.Subscribe(bridgeName)
-	
+
 	// Start message routing goroutine
 	m.routingWg.Add(1)
 	go func() {
 		defer m.routingWg.Done()
 		defer m.logger.LogDebug("Message handler stopped for bridge", "bridge", bridgeName)
-		
+
 		for {
 			select {
 			case msg, ok := <-messageChannel:
@@ -439,27 +458,27 @@ func (m *BridgeManager) startBridgeMessageHandler(bridgeName string, bridge mode
 					m.logger.LogDebug("Message channel closed for bridge", "bridge", bridgeName)
 					return
 				}
-				
+
 				if err := m.handleBridgeMessage(bridgeName, bridge, msg); err != nil {
-					m.logger.LogError("Failed to handle message for bridge", 
+					m.logger.LogError("Failed to handle message for bridge",
 						"bridge", bridgeName,
 						"source_bridge", msg.SourceBridge,
 						"error", err)
 				}
-				
+
 			case <-m.routingCtx.Done():
 				m.logger.LogDebug("Context cancelled, stopping message handler", "bridge", bridgeName)
 				return
 			}
 		}
 	}()
-	
+
 	// Listen to bridge's outgoing messages
 	m.routingWg.Add(1)
 	go func() {
 		defer m.routingWg.Done()
 		defer m.logger.LogDebug("Bridge message listener stopped", "bridge", bridgeName)
-		
+
 		bridgeMessageChannel := bridge.GetMessageChannel()
 		for {
 			select {
@@ -468,14 +487,14 @@ func (m *BridgeManager) startBridgeMessageHandler(bridgeName string, bridge mode
 					m.logger.LogDebug("Bridge message channel closed", "bridge", bridgeName)
 					return
 				}
-				
+
 				if err := m.messageBus.Publish(msg); err != nil {
-					m.logger.LogError("Failed to publish message from bridge", 
+					m.logger.LogError("Failed to publish message from bridge",
 						"bridge", bridgeName,
 						"direction", msg.Direction,
 						"error", err)
 				}
-				
+
 			case <-m.routingCtx.Done():
 				m.logger.LogDebug("Context cancelled, stopping bridge listener", "bridge", bridgeName)
 				return
@@ -486,26 +505,26 @@ func (m *BridgeManager) startBridgeMessageHandler(bridgeName string, bridge mode
 
 // handleBridgeMessage processes an incoming message for a specific bridge
 func (m *BridgeManager) handleBridgeMessage(bridgeName string, bridge model.Bridge, msg *model.DirectionalMessage) error {
-	m.logger.LogDebug("Handling message for bridge", 
+	m.logger.LogDebug("Handling message for bridge",
 		"target_bridge", bridgeName,
 		"source_bridge", msg.SourceBridge,
 		"direction", msg.Direction,
 		"channel_id", msg.SourceChannelID)
-	
+
 	// Get the bridge's message handler
 	handler := bridge.GetMessageHandler()
 	if handler == nil {
 		return fmt.Errorf("bridge %s does not have a message handler", bridgeName)
 	}
-	
+
 	// Check if the handler can process this message
 	if !handler.CanHandleMessage(msg.BridgeMessage) {
-		m.logger.LogDebug("Bridge cannot handle message", 
+		m.logger.LogDebug("Bridge cannot handle message",
 			"bridge", bridgeName,
 			"message_type", msg.MessageType)
 		return nil // Not an error, just skip
 	}
-	
+
 	// Process the message
 	return handler.ProcessMessage(msg)
 }
@@ -519,15 +538,15 @@ func (m *BridgeManager) StartMessageRouting() error {
 // StopMessageRouting stops the message bus and routing system
 func (m *BridgeManager) StopMessageRouting() error {
 	m.logger.LogInfo("Stopping message routing system")
-	
+
 	// Cancel routing context
 	if m.routingCancel != nil {
 		m.routingCancel()
 	}
-	
+
 	// Wait for all routing goroutines to finish
 	m.routingWg.Wait()
-	
+
 	// Stop the message bus
 	return m.messageBus.Stop()
 }

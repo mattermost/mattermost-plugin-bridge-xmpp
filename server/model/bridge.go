@@ -73,6 +73,9 @@ func (r DeleteChannelMappingRequest) Validate() error {
 }
 
 type BridgeManager interface {
+	// Start starts the bridge manager and message routing system.
+	Start() error
+
 	// RegisterBridge registers a bridge with the given name. Returns an error if the name is empty,
 	// the bridge is nil, or a bridge with the same name is already registered.
 	RegisterBridge(name string, bridge Bridge) error
@@ -138,11 +141,11 @@ type Bridge interface {
 	// DeleteChannelMapping removes a mapping between a Mattermost channel ID and a bridge room ID.
 	DeleteChannelMapping(channelID string) error
 
-	// RoomExists checks if a room/channel exists on the remote service.
-	RoomExists(roomID string) (bool, error)
+	// ChannelMappingExists checks if a room/channel exists on the remote service.
+	ChannelMappingExists(roomID string) (bool, error)
 
-	// GetRoomMapping retrieves the Mattermost channel ID for a given room ID (reverse lookup).
-	GetRoomMapping(roomID string) (string, error)
+	// GetChannelMappingForBridge retrieves the Mattermost channel ID for a given room ID from a specific bridge.
+	GetChannelMappingForBridge(bridgeName, roomID string) (string, error)
 
 	// IsConnected checks if the bridge is connected to the remote service.
 	IsConnected() bool

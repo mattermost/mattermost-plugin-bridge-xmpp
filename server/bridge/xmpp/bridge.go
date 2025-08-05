@@ -502,8 +502,8 @@ func (b *xmppBridge) DeleteChannelMapping(channelID string) error {
 	return nil
 }
 
-// RoomExists checks if an XMPP room exists on the remote service
-func (b *xmppBridge) RoomExists(roomID string) (bool, error) {
+// ChannelMappingExists checks if an XMPP room exists on the remote service
+func (b *xmppBridge) ChannelMappingExists(roomID string) (bool, error) {
 	if !b.connected.Load() {
 		return false, fmt.Errorf("not connected to XMPP server")
 	}
@@ -547,6 +547,22 @@ func (b *xmppBridge) GetRoomMapping(roomID string) (string, error) {
 	return channelID, nil
 }
 
+// GetChannelMappingForBridge retrieves the Mattermost channel ID for a given room ID from a specific bridge
+func (b *xmppBridge) GetChannelMappingForBridge(bridgeName, roomID string) (string, error) {
+	// Look up the channel ID using the bridge name and room ID as the key
+	channelIDBytes, err := b.kvstore.Get(kvstore.BuildChannelMapKey(bridgeName, roomID))
+	if err != nil {
+		// No mapping found is not an error, just return empty string
+		b.logger.LogDebug("No channel mapping found for bridge room", "bridge_name", bridgeName, "room_id", roomID)
+		return "", nil
+	}
+
+	channelID := string(channelIDBytes)
+	b.logger.LogDebug("Found channel mapping for bridge room", "bridge_name", bridgeName, "room_id", roomID, "channel_id", channelID)
+
+	return channelID, nil
+}
+
 // GetUserManager returns the user manager for this bridge
 func (b *xmppBridge) GetUserManager() pluginModel.BridgeUserManager {
 	return b.userManager
@@ -554,44 +570,30 @@ func (b *xmppBridge) GetUserManager() pluginModel.BridgeUserManager {
 
 // startMessageAggregation starts the message aggregation goroutine
 func (b *xmppBridge) startMessageAggregation() {
-	b.logger.LogDebug("Starting XMPP message aggregation")
+	clientChannel := b.bridgeClient.GetMessageChannel()
 
 	for {
 		select {
 		case <-b.ctx.Done():
 			b.logger.LogDebug("Stopping XMPP message aggregation")
 			return
-		default:
-			// Aggregate messages from bridge client if available
-			if b.bridgeClient != nil {
-				clientChannel := b.bridgeClient.GetMessageChannel()
-				select {
-				case msg, ok := <-clientChannel:
-					if !ok {
-						b.logger.LogDebug("Bridge client message channel closed")
-						continue
-					}
-
-					// Forward to our bridge's message channel
-					select {
-					case b.incomingMessages <- msg:
-						b.logger.LogDebug("Message forwarded from bridge client",
-							"source_channel", msg.SourceChannelID,
-							"user_id", msg.SourceUserID)
-					default:
-						b.logger.LogWarn("Bridge message channel full, dropping message",
-							"source_channel", msg.SourceChannelID,
-							"user_id", msg.SourceUserID)
-					}
-				case <-b.ctx.Done():
-					return
-				default:
-					// No messages available, continue with other potential sources
-				}
+		case msg, ok := <-clientChannel:
+			if !ok {
+				b.logger.LogDebug("Bridge client message channel closed")
+				return
 			}
 
-			// TODO: Add aggregation from user client channels when implemented
-			// This is where we would aggregate from multiple XMPP user connections
+			// Forward to our bridge's message channel
+			select {
+			case b.incomingMessages <- msg:
+				// Message forwarded successfully
+			case <-b.ctx.Done():
+				return
+			default:
+				b.logger.LogWarn("Bridge message channel full, dropping message",
+					"source_channel", msg.SourceChannelID,
+					"user_id", msg.SourceUserID)
+			}
 		}
 	}
 }

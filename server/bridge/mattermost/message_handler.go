@@ -62,8 +62,8 @@ func (h *mattermostMessageHandler) postMessageToMattermost(msg *pluginModel.Brid
 		return fmt.Errorf("Mattermost API not initialized")
 	}
 
-	// Get the Mattermost channel ID from the channel mapping
-	channelID, err := h.bridge.GetRoomMapping(msg.SourceChannelID)
+	// Get the Mattermost channel ID from the channel mapping using the source bridge name
+	channelID, err := h.bridge.GetChannelMappingForBridge(msg.SourceBridge, msg.SourceChannelID)
 	if err != nil {
 		return fmt.Errorf("failed to get channel mapping: %w", err)
 	}
@@ -87,14 +87,15 @@ func (h *mattermostMessageHandler) postMessageToMattermost(msg *pluginModel.Brid
 	// Create the post
 	post := &mmModel.Post{
 		ChannelId: channelID,
+		UserId:    h.bridge.botUserID,
 		Message:   content,
 		Type:      mmModel.PostTypeDefault,
 		Props: map[string]interface{}{
-			"from_bridge":        msg.SourceBridge,
-			"bridge_user_id":     msg.SourceUserID,
-			"bridge_user_name":   msg.SourceUserName,
-			"bridge_message_id":  msg.MessageID,
-			"bridge_timestamp":   msg.Timestamp.Unix(),
+			"from_bridge":       msg.SourceBridge,
+			"bridge_user_id":    msg.SourceUserID,
+			"bridge_user_name":  msg.SourceUserName,
+			"bridge_message_id": msg.MessageID,
+			"bridge_timestamp":  msg.Timestamp.Unix(),
 		},
 	}
 

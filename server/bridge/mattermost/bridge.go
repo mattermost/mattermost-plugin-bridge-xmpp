@@ -25,6 +25,7 @@ type mattermostBridge struct {
 	api         plugin.API
 	kvstore     kvstore.KVStore
 	userManager pluginModel.BridgeUserManager
+	botUserID   string // Bot user ID for posting messages
 
 	// Message handling
 	messageHandler   *mattermostMessageHandler
@@ -46,12 +47,13 @@ type mattermostBridge struct {
 }
 
 // NewBridge creates a new Mattermost bridge
-func NewBridge(log logger.Logger, api plugin.API, kvstore kvstore.KVStore, cfg *config.Configuration) pluginModel.Bridge {
+func NewBridge(log logger.Logger, api plugin.API, kvstore kvstore.KVStore, cfg *config.Configuration, botUserID string) pluginModel.Bridge {
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &mattermostBridge{
 		logger:           log,
 		api:              api,
 		kvstore:          kvstore,
+		botUserID:        botUserID,
 		ctx:              ctx,
 		cancel:           cancel,
 		channelMappings:  make(map[string]string),
@@ -304,8 +306,8 @@ func (b *mattermostBridge) DeleteChannelMapping(channelID string) error {
 	return nil
 }
 
-// RoomExists checks if a Mattermost channel exists on the server
-func (b *mattermostBridge) RoomExists(roomID string) (bool, error) {
+// ChannelMappingExists checks if a Mattermost channel exists on the server
+func (b *mattermostBridge) ChannelMappingExists(roomID string) (bool, error) {
 	if b.api == nil {
 		return false, fmt.Errorf("Mattermost API not initialized")
 	}
@@ -350,6 +352,21 @@ func (b *mattermostBridge) GetRoomMapping(roomID string) (string, error) {
 
 	channelID := string(channelIDBytes)
 	b.logger.LogDebug("Found channel mapping for room", "room_id", roomID, "channel_id", channelID)
+
+	return channelID, nil
+}
+
+// GetChannelMappingForBridge retrieves the Mattermost channel ID for a given room ID from a specific bridge
+func (b *mattermostBridge) GetChannelMappingForBridge(bridgeName, roomID string) (string, error) {
+	channelIDBytes, err := b.kvstore.Get(kvstore.BuildChannelMapKey(bridgeName, roomID))
+	if err != nil {
+		// No mapping found is not an error, just return empty string
+		b.logger.LogDebug("No channel mapping found for bridge room", "bridge_name", bridgeName, "room_id", roomID)
+		return "", nil
+	}
+
+	channelID := string(channelIDBytes)
+	b.logger.LogDebug("Found channel mapping for bridge room", "bridge_name", bridgeName, "room_id", roomID, "channel_id", channelID)
 
 	return channelID, nil
 }

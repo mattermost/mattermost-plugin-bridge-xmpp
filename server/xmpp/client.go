@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jellydator/ttlcache/v3"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
 	"mellium.im/sasl"
@@ -26,6 +27,9 @@ const (
 
 	// msgBufferSize is the buffer size for incoming message channels
 	msgBufferSize = 1000
+
+	// messageDedupeTTL is the TTL for message deduplication cache
+	messageDedupeTTL = 30 * time.Second
 )
 
 // Client represents an XMPP client for communicating with XMPP servers.
@@ -51,6 +55,9 @@ type Client struct {
 
 	// Message handling for bridge integration
 	incomingMessages chan *model.DirectionalMessage
+
+	// Message deduplication cache to handle XMPP server duplicates
+	dedupeCache *ttlcache.Cache[string, time.Time]
 }
 
 // MessageRequest represents a request to send a message.
@@ -99,6 +106,14 @@ type UserProfile struct {
 func NewClient(serverURL, username, password, resource, remoteID string, logger logger.Logger) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Create TTL cache for message deduplication
+	dedupeCache := ttlcache.New(
+		ttlcache.WithTTL[string, time.Time](messageDedupeTTL),
+	)
+
+	// Start automatic cleanup in background
+	go dedupeCache.Start()
+
 	client := &Client{
 		serverURL:        serverURL,
 		username:         username,
@@ -110,6 +125,7 @@ func NewClient(serverURL, username, password, resource, remoteID string, logger 
 		cancel:           cancel,
 		sessionReady:     make(chan struct{}),
 		incomingMessages: make(chan *model.DirectionalMessage, msgBufferSize),
+		dedupeCache:      dedupeCache,
 	}
 
 	// Create MUC client and set up message handling
@@ -139,6 +155,7 @@ func (c *Client) SetServerDomain(domain string) {
 
 // Connect establishes connection to the XMPP server
 func (c *Client) Connect() error {
+
 	if c.session != nil {
 		return nil // Already connected
 	}
@@ -269,10 +286,11 @@ func (c *Client) Disconnect() error {
 		// Continue with cleanup even on timeout
 	}
 
+	// Stop the TTL cache cleanup goroutine
+	c.dedupeCache.Stop()
+
 	// Cancel the client context
-	if c.cancel != nil {
-		c.cancel()
-	}
+	c.cancel()
 
 	c.logger.LogInfo("XMPP client disconnected successfully")
 	return nil
@@ -653,6 +671,17 @@ func (c *Client) handleIncomingMessage(msg stanza.Message, t xmlstream.TokenRead
 		return nil
 	}
 
+	// Deduplicate messages using message ID and TTL cache
+	if msg.ID != "" {
+		// Check if this message ID is already in the cache (indicates duplicate)
+		if c.dedupeCache.Has(msg.ID) {
+			return nil
+		}
+
+		// Record this message in the cache with TTL
+		c.dedupeCache.Set(msg.ID, time.Now(), ttlcache.DefaultTTL)
+	}
+
 	// Extract channel and user information from JIDs
 	channelID, err := c.extractChannelID(msg.From)
 	if err != nil {
@@ -688,10 +717,7 @@ func (c *Client) handleIncomingMessage(msg stanza.Message, t xmlstream.TokenRead
 	// Send to message channel (non-blocking)
 	select {
 	case c.incomingMessages <- directionalMsg:
-		c.logger.LogDebug("Message queued for processing",
-			"channel_id", channelID,
-			"user_id", userID,
-			"content_length", len(msgWithBody.Body))
+		// Message queued successfully
 	default:
 		c.logger.LogWarn("Message channel full, dropping message",
 			"channel_id", channelID,

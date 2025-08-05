@@ -14,7 +14,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
 	pluginModel "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/store/kvstore"
-	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/xmpp"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -34,9 +33,6 @@ type Plugin struct {
 
 	// commandClient is the client used to register and execute slash commands.
 	commandClient command.Command
-
-	// xmppClient is the client used to communicate with XMPP servers.
-	xmppClient *xmpp.Client
 
 	// logger is the main plugin logger
 	logger logger.Logger
@@ -70,15 +66,11 @@ func (p *Plugin) OnActivate() error {
 
 	p.kvstore = kvstore.NewKVStore(p.client)
 
-	p.initXMPPClient()
-
 	// Load configuration directly
 	cfg := p.getConfiguration()
-	p.logger.LogDebug("Loaded configuration in OnActivate", "config", cfg)
 
 	// Register the plugin for shared channels
 	if err := p.registerForSharedChannels(); err != nil {
-		p.logger.LogError("Failed to register for shared channels", "error", err)
 		return fmt.Errorf("failed to register for shared channels: %w", err)
 	}
 
@@ -87,11 +79,15 @@ func (p *Plugin) OnActivate() error {
 
 	// Initialize and register bridges with current configuration
 	if err := p.initBridges(*cfg); err != nil {
-		p.logger.LogError("Failed to initialize bridges", "error", err)
 		return fmt.Errorf("failed to initialize bridges: %w", err)
 	}
 
 	p.commandClient = command.NewCommandHandler(p.client, p.bridgeManager)
+
+	// Start the bridge manager (this starts message routing)
+	if err := p.bridgeManager.Start(); err != nil {
+		return fmt.Errorf("failed to start bridge manager: %w", err)
+	}
 
 	// Start all bridges
 	for _, bridgeName := range p.bridgeManager.ListBridges() {
@@ -145,18 +141,6 @@ func (p *Plugin) ExecuteCommand(c *plugin.Context, args *model.CommandArgs) (*mo
 	return response, nil
 }
 
-func (p *Plugin) initXMPPClient() {
-	cfg := p.getConfiguration()
-	p.xmppClient = xmpp.NewClient(
-		cfg.XMPPServerURL,
-		cfg.XMPPUsername,
-		cfg.XMPPPassword,
-		cfg.GetXMPPResource(),
-		p.remoteID,
-		p.logger,
-	)
-}
-
 func (p *Plugin) initBridges(cfg config.Configuration) error {
 	// Create and register XMPP bridge
 	xmppBridge := xmppbridge.NewBridge(
@@ -176,6 +160,7 @@ func (p *Plugin) initBridges(cfg config.Configuration) error {
 		p.API,
 		p.kvstore,
 		&cfg,
+		p.botUserID,
 	)
 
 	if err := p.bridgeManager.RegisterBridge("mattermost", mattermostBridge); err != nil {
