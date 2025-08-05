@@ -6,6 +6,8 @@ import (
 	"crypto/tls"
 	"encoding/xml"
 	"fmt"
+	"net"
+	"net/url"
 	"time"
 
 	"github.com/jellydator/ttlcache/v3"
@@ -153,6 +155,44 @@ func (c *Client) SetServerDomain(domain string) {
 	c.serverDomain = domain
 }
 
+// parseServerAddress parses a server URL and returns a host:port address
+func (c *Client) parseServerAddress(serverURL string) (string, error) {
+	// Handle simple host:port format (e.g., "localhost:5222")
+	if host, port, err := net.SplitHostPort(serverURL); err == nil {
+		// Already in host:port format, validate and return
+		if host == "" {
+			return "", fmt.Errorf("empty hostname in server URL: %s", serverURL)
+		}
+		if port == "" {
+			return "", fmt.Errorf("empty port in server URL: %s", serverURL)
+		}
+		return serverURL, nil
+	}
+
+	// Try parsing as URL (e.g., "xmpp://localhost:5222" or "xmpps://localhost:5223")
+	parsedURL, err := url.Parse(serverURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid server URL format: %w", err)
+	}
+
+	host := parsedURL.Hostname()
+	if host == "" {
+		return "", fmt.Errorf("no hostname found in server URL: %s", serverURL)
+	}
+
+	port := parsedURL.Port()
+	// Use default XMPP port if not specified
+	if port == "" {
+		if parsedURL.Scheme == "xmpps" {
+			port = "5223"
+		} else {
+			port = "5222"
+		}
+	}
+
+	return host + ":" + port, nil
+}
+
 // Connect establishes connection to the XMPP server
 func (c *Client) Connect() error {
 	if c.session != nil {
@@ -192,15 +232,34 @@ func (c *Client) Connect() error {
 	connectCtx, connectCancel := context.WithTimeout(c.ctx, 30*time.Second)
 	defer connectCancel()
 
-	// Use DialClientSession for proper SASL authentication with timeout
-	c.session, err = xmpp.DialClientSession(
+	c.logger.LogDebug("Connecting to XMPP server", "server_url", c.serverURL)
+
+	// Parse server address for direct connection
+	// We use this instead of using the JID for the user to avoid SRV lookups that can fail
+	// depending on network/dns configuration and to ensure we connect directly to the specified
+	// server.
+	serverAddr, err := c.parseServerAddress(c.serverURL)
+	if err != nil {
+		return fmt.Errorf("failed to parse server URL %s: %w", c.serverURL, err)
+	}
+
+	var d net.Dialer
+	conn, err := d.DialContext(connectCtx, "tcp", serverAddr)
+	if err != nil {
+		return fmt.Errorf("failed to dial XMPP server at %s: %w", serverAddr, err)
+	}
+
+	// Create client session with direct connection
+	c.session, err = xmpp.NewClientSession(
 		connectCtx,
 		c.jidAddr,
+		conn,
 		xmpp.StartTLS(tlsConfig),
 		xmpp.SASL("", c.password, sasl.Plain),
 		xmpp.BindResource(),
 	)
 	if err != nil {
+		conn.Close()
 		return fmt.Errorf("failed to establish XMPP session: %w", err)
 	}
 
