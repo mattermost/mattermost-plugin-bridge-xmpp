@@ -26,6 +26,7 @@ type mattermostBridge struct {
 	kvstore     kvstore.KVStore
 	userManager pluginModel.BridgeUserManager
 	botUserID   string // Bot user ID for posting messages
+	remoteID    string // Remote ID for shared channels
 
 	// Message handling
 	messageHandler   *mattermostMessageHandler
@@ -47,13 +48,14 @@ type mattermostBridge struct {
 }
 
 // NewBridge creates a new Mattermost bridge
-func NewBridge(log logger.Logger, api plugin.API, kvstore kvstore.KVStore, cfg *config.Configuration, botUserID string) pluginModel.Bridge {
+func NewBridge(log logger.Logger, api plugin.API, kvstore kvstore.KVStore, cfg *config.Configuration, botUserID, remoteID string) pluginModel.Bridge {
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &mattermostBridge{
 		logger:           log,
 		api:              api,
 		kvstore:          kvstore,
 		botUserID:        botUserID,
+		remoteID:         remoteID,
 		ctx:              ctx,
 		cancel:           cancel,
 		channelMappings:  make(map[string]string),
@@ -394,4 +396,9 @@ func (b *mattermostBridge) GetMessageHandler() pluginModel.MessageHandler {
 // GetUserResolver returns the user resolver for this bridge
 func (b *mattermostBridge) GetUserResolver() pluginModel.UserResolver {
 	return b.userResolver
+}
+
+// GetRemoteID returns the remote ID used for shared channels registration
+func (b *mattermostBridge) GetRemoteID() string {
+	return b.remoteID
 }

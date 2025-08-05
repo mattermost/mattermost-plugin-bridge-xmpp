@@ -161,6 +161,9 @@ type Bridge interface {
 	SendMessage(msg *BridgeMessage) error
 	GetMessageHandler() MessageHandler
 	GetUserResolver() UserResolver
+
+	// GetRemoteID returns the remote ID used for shared channels registration
+	GetRemoteID() string
 }
 
 // BridgeUser represents a user connected to any bridge service

@@ -6,11 +6,13 @@ import (
 
 	pluginModel "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
 type Handler struct {
 	client        *pluginapi.Client
+	api           plugin.API
 	bridgeManager pluginModel.BridgeManager
 }
 
@@ -22,7 +24,7 @@ type Command interface {
 const xmppBridgeCommandTrigger = "xmppbridge"
 
 // Register all your slash commands in the NewCommandHandler function.
-func NewCommandHandler(client *pluginapi.Client, bridgeManager pluginModel.BridgeManager) Command {
+func NewCommandHandler(client *pluginapi.Client, api plugin.API, bridgeManager pluginModel.BridgeManager) Command {
 	// Register XMPP bridge command
 	xmppBridgeData := model.NewAutocompleteData(xmppBridgeCommandTrigger, "", "Manage XMPP bridge")
 	mapSubcommand := model.NewAutocompleteData("map", "[room_jid]", "Map current channel to XMPP room")
@@ -35,11 +37,17 @@ func NewCommandHandler(client *pluginapi.Client, bridgeManager pluginModel.Bridg
 	statusSubcommand := model.NewAutocompleteData("status", "", "Show bridge connection status")
 	xmppBridgeData.AddCommand(statusSubcommand)
 
+	syncSubcommand := model.NewAutocompleteData("sync", "", "Force sync with shared channels if channel is mapped")
+	xmppBridgeData.AddCommand(syncSubcommand)
+
+	syncResetSubcommand := model.NewAutocompleteData("sync-reset", "", "Reset sync cursor for channel if mapped")
+	xmppBridgeData.AddCommand(syncResetSubcommand)
+
 	err := client.SlashCommand.Register(&model.Command{
 		Trigger:          xmppBridgeCommandTrigger,
 		AutoComplete:     true,
 		AutoCompleteDesc: "Manage XMPP bridge mappings",
-		AutoCompleteHint: "[map|unmap|status]",
+		AutoCompleteHint: "[map|unmap|status|sync|sync-reset]",
 		AutocompleteData: xmppBridgeData,
 	})
 	if err != nil {
@@ -48,6 +56,7 @@ func NewCommandHandler(client *pluginapi.Client, bridgeManager pluginModel.Bridg
 
 	return &Handler{
 		client:        client,
+		api:           api,
 		bridgeManager: bridgeManager,
 	}
 }
@@ -85,6 +94,8 @@ func (c *Handler) executeXMPPBridgeCommand(args *model.CommandArgs) *model.Comma
 - ` + "`/xmppbridge map <room_jid>`" + ` - Map current channel to XMPP room
 - ` + "`/xmppbridge unmap`" + ` - Unmap current channel from XMPP room
 - ` + "`/xmppbridge status`" + ` - Show bridge connection status
+- ` + "`/xmppbridge sync`" + ` - Force sync with shared channels if channel is mapped
+- ` + "`/xmppbridge sync-reset`" + ` - Reset sync cursor for channel if mapped
 
 **Example:**
 ` + "`/xmppbridge map general@conference.example.com`",
@@ -99,6 +110,10 @@ func (c *Handler) executeXMPPBridgeCommand(args *model.CommandArgs) *model.Comma
 		return c.executeUnmapCommand(args)
 	case "status":
 		return c.executeStatusCommand(args)
+	case "sync":
+		return c.executeSyncCommand(args)
+	case "sync-reset":
+		return c.executeSyncResetCommand(args)
 	default:
 		return &model.CommandResponse{
 			ResponseType: model.CommandResponseTypeEphemeral,
@@ -284,6 +299,105 @@ func (c *Handler) isSystemAdmin(userID string) bool {
 }
 
 // formatMappingError provides user-friendly error messages for mapping operations
+func (c *Handler) executeSyncCommand(args *model.CommandArgs) *model.CommandResponse {
+	channelID := args.ChannelId
+
+	// Get the XMPP bridge to check if channel is mapped
+	bridge, err := c.bridgeManager.GetBridge("xmpp")
+	if err != nil {
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text:         "❌ XMPP bridge is not available. Please check the plugin configuration.",
+		}
+	}
+
+	// Check if channel is mapped to XMPP
+	roomJID, err := bridge.GetChannelMapping(channelID)
+	if err != nil {
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text:         fmt.Sprintf("Error checking channel mapping: %v", err),
+		}
+	}
+
+	if roomJID == "" {
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text:         "❌ This channel is not mapped to any XMPP room. Use `/xmppbridge map <room_jid>` to create a mapping first.",
+		}
+	}
+
+	// Force sync with shared channels
+	if err := c.api.SyncSharedChannel(channelID); err != nil {
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text:         fmt.Sprintf("❌ Failed to sync channel: %v", err),
+		}
+	}
+
+	return &model.CommandResponse{
+		ResponseType: model.CommandResponseTypeEphemeral,
+		Text:         fmt.Sprintf("✅ Successfully triggered sync for channel mapped to XMPP room: `%s`", roomJID),
+	}
+}
+
+func (c *Handler) executeSyncResetCommand(args *model.CommandArgs) *model.CommandResponse {
+	channelID := args.ChannelId
+
+	// Get the XMPP bridge to check if channel is mapped
+	bridge, err := c.bridgeManager.GetBridge("xmpp")
+	if err != nil {
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text:         "❌ XMPP bridge is not available. Please check the plugin configuration.",
+		}
+	}
+
+	// Check if channel is mapped to XMPP
+	roomJID, err := bridge.GetChannelMapping(channelID)
+	if err != nil {
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text:         fmt.Sprintf("Error checking channel mapping: %v", err),
+		}
+	}
+
+	if roomJID == "" {
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text:         "❌ This channel is not mapped to any XMPP room. Use `/xmppbridge map <room_jid>` to create a mapping first.",
+		}
+	}
+
+	// Get remoteID from bridge for cursor operations
+	remoteID := bridge.GetRemoteID()
+	if remoteID == "" {
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text:         "❌ Bridge remote ID not available. Cannot reset sync cursor.",
+		}
+	}
+
+	// Create empty cursor to reset to beginning
+	emptyCursor := model.GetPostsSinceForSyncCursor{
+		LastPostUpdateAt: 1,
+		LastPostCreateAt: 1,
+	}
+
+	// Reset sync cursor using UpdateSharedChannelCursor
+	if err := c.api.UpdateSharedChannelCursor(channelID, remoteID, emptyCursor); err != nil {
+		return &model.CommandResponse{
+			ResponseType: model.CommandResponseTypeEphemeral,
+			Text:         fmt.Sprintf("❌ Failed to reset sync cursor: %v", err),
+		}
+	}
+
+	return &model.CommandResponse{
+		ResponseType: model.CommandResponseTypeEphemeral,
+		Text:         fmt.Sprintf("✅ Successfully reset sync cursor for channel mapped to XMPP room: `%s`", roomJID),
+	}
+}
+
 func (c *Handler) formatMappingError(operation, roomJID string, err error) *model.CommandResponse {
 	errorMsg := err.Error()
 

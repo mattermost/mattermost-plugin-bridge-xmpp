@@ -82,7 +82,7 @@ func (p *Plugin) OnActivate() error {
 		return fmt.Errorf("failed to initialize bridges: %w", err)
 	}
 
-	p.commandClient = command.NewCommandHandler(p.client, p.bridgeManager)
+	p.commandClient = command.NewCommandHandler(p.client, p.API, p.bridgeManager)
 
 	// Start the bridge manager (this starts message routing)
 	if err := p.bridgeManager.Start(); err != nil {
@@ -148,6 +148,7 @@ func (p *Plugin) initBridges(cfg config.Configuration) error {
 		p.API,
 		p.kvstore,
 		&cfg,
+		p.remoteID,
 	)
 
 	if err := p.bridgeManager.RegisterBridge("xmpp", xmppBridge); err != nil {
@@ -161,6 +162,7 @@ func (p *Plugin) initBridges(cfg config.Configuration) error {
 		p.kvstore,
 		&cfg,
 		p.botUserID,
+		"mattermost",
 	)
 
 	if err := p.bridgeManager.RegisterBridge("mattermost", mattermostBridge); err != nil {
@@ -188,7 +190,7 @@ func (p *Plugin) registerForSharedChannels() error {
 		PluginID:     manifest.Id,
 		CreatorID:    botUserID,
 		AutoShareDMs: false,
-		AutoInvited:  true,
+		AutoInvited:  false,
 	}
 
 	remoteID, appErr := p.API.RegisterPluginForSharedChannels(opts)
