@@ -155,7 +155,6 @@ func (c *Client) SetServerDomain(domain string) {
 
 // Connect establishes connection to the XMPP server
 func (c *Client) Connect() error {
-
 	if c.session != nil {
 		return nil // Already connected
 	}

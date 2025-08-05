@@ -20,11 +20,11 @@ const (
 
 // CreateChannelMappingRequest contains information needed to create a channel mapping
 type CreateChannelMappingRequest struct {
-	ChannelID    string // Mattermost channel ID
-	BridgeName   string // Name of the bridge (e.g., "xmpp")
-	BridgeRoomID string // Remote room/channel ID (e.g., JID for XMPP)
-	UserID       string // ID of user who triggered the mapping creation
-	TeamID       string // Team ID where the channel belongs
+	ChannelID       string // Mattermost channel ID
+	BridgeName      string // Name of the bridge (e.g., "xmpp")
+	BridgeChannelID string // Remote room/channel ID (e.g., JID for XMPP)
+	UserID          string // ID of user who triggered the mapping creation
+	TeamID          string // Team ID where the channel belongs
 }
 
 // Validate checks if all required fields are present and valid
@@ -35,8 +35,8 @@ func (r CreateChannelMappingRequest) Validate() error {
 	if r.BridgeName == "" {
 		return fmt.Errorf("bridgeName cannot be empty")
 	}
-	if r.BridgeRoomID == "" {
-		return fmt.Errorf("bridgeRoomID cannot be empty")
+	if r.BridgeChannelID == "" {
+		return fmt.Errorf("bridgeChannelID cannot be empty")
 	}
 	if r.UserID == "" {
 		return fmt.Errorf("userID cannot be empty")
@@ -132,13 +132,13 @@ type Bridge interface {
 	// Stop stops the bridge
 	Stop() error
 
-	// CreateChannelMapping creates a mapping between a Mattermost channel ID and an bridge room ID.
+	// CreateChannelMapping creates a mapping between a Mattermost channel ID and a bridge channel ID.
 	CreateChannelMapping(channelID, roomJID string) error
 
-	// GetChannelMapping retrieves the bridge room ID for a given Mattermost channel ID.
+	// GetChannelMapping retrieves the bridge channel ID for a given Mattermost channel ID.
 	GetChannelMapping(channelID string) (string, error)
 
-	// DeleteChannelMapping removes a mapping between a Mattermost channel ID and a bridge room ID.
+	// DeleteChannelMapping removes a mapping between a Mattermost channel ID and a bridge channel ID.
 	DeleteChannelMapping(channelID string) error
 
 	// ChannelMappingExists checks if a room/channel exists on the remote service.

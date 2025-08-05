@@ -161,11 +161,11 @@ func (c *Handler) executeMapCommand(args *model.CommandArgs, fields []string) *m
 
 	// Create the mapping using BridgeManager
 	mappingReq := pluginModel.CreateChannelMappingRequest{
-		ChannelID:    channelID,
-		BridgeName:   "xmpp",
-		BridgeRoomID: roomJID,
-		UserID:       args.UserId,
-		TeamID:       args.TeamId,
+		ChannelID:       channelID,
+		BridgeName:      "xmpp",
+		BridgeChannelID: roomJID,
+		UserID:          args.UserId,
+		TeamID:          args.TeamId,
 	}
 
 	err = c.bridgeManager.CreateChannelMapping(mappingReq)
@@ -292,7 +292,7 @@ func (c *Handler) formatMappingError(operation, roomJID string, err error) *mode
 	case strings.Contains(errorMsg, "already mapped to channel"):
 		return &model.CommandResponse{
 			ResponseType: model.CommandResponseTypeEphemeral,
-			Text: fmt.Sprintf(`❌ **Room Already Mapped**
+			Text: fmt.Sprintf(`❌ **Channel Already Mapped**
 
 The XMPP room **%s** is already connected to another channel.
 
@@ -305,7 +305,7 @@ The XMPP room **%s** is already connected to another channel.
 	case strings.Contains(errorMsg, "does not exist"):
 		return &model.CommandResponse{
 			ResponseType: model.CommandResponseTypeEphemeral,
-			Text: fmt.Sprintf(`❌ **Room Not Found**
+			Text: fmt.Sprintf(`❌ **Channel Not Found**
 
 The XMPP room **%s** doesn't exist or isn't accessible.
 

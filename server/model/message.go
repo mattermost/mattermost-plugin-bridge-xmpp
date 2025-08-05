@@ -30,8 +30,8 @@ type BridgeMessage struct {
 	ThreadID  string    // Thread/reply ID (if applicable)
 
 	// Routing hints
-	TargetBridges []string        // Which bridges should receive this
-	Metadata      map[string]any  // Bridge-specific metadata
+	TargetBridges []string       // Which bridges should receive this
+	Metadata      map[string]any // Bridge-specific metadata
 }
 
 // DirectionalMessage wraps a BridgeMessage with direction information

@@ -264,7 +264,7 @@ func (m *BridgeManager) CreateChannelMapping(req model.CreateChannelMappingReque
 		return fmt.Errorf("invalid mapping request: %w", err)
 	}
 
-	m.logger.LogDebug("Creating channel mapping", "channel_id", req.ChannelID, "bridge_name", req.BridgeName, "bridge_room_id", req.BridgeRoomID, "user_id", req.UserID, "team_id", req.TeamID)
+	m.logger.LogDebug("Creating channel mapping", "channel_id", req.ChannelID, "bridge_name", req.BridgeName, "bridge_channel_id", req.BridgeChannelID, "user_id", req.UserID, "team_id", req.TeamID)
 
 	// Get the specific bridge
 	bridge, err := m.GetBridge(req.BridgeName)
@@ -279,41 +279,41 @@ func (m *BridgeManager) CreateChannelMapping(req model.CreateChannelMappingReque
 	}
 
 	// NEW: Check if room already mapped to another channel
-	existingChannelID, err := bridge.GetChannelMapping(req.BridgeRoomID)
+	existingChannelID, err := bridge.GetChannelMapping(req.BridgeChannelID)
 	if err != nil {
-		m.logger.LogError("Failed to check room mapping", "bridge_room_id", req.BridgeRoomID, "error", err)
-		return fmt.Errorf("failed to check room mapping: %w", err)
+		m.logger.LogError("Failed to check channel mapping", "bridge_channel_id", req.BridgeChannelID, "error", err)
+		return fmt.Errorf("failed to check channel mapping: %w", err)
 	}
 	if existingChannelID != "" {
-		m.logger.LogWarn("Room already mapped to another channel",
-			"bridge_room_id", req.BridgeRoomID,
+		m.logger.LogWarn("Channel already mapped to another channel",
+			"bridge_channel_id", req.BridgeChannelID,
 			"existing_channel_id", existingChannelID,
 			"requested_channel_id", req.ChannelID)
-		return fmt.Errorf("room '%s' is already mapped to channel '%s'", req.BridgeRoomID, existingChannelID)
+		return fmt.Errorf("channel '%s' is already mapped to channel '%s'", req.BridgeChannelID, existingChannelID)
 	}
 
 	// NEW: Check if room exists on target bridge
-	roomExists, err := bridge.ChannelMappingExists(req.BridgeRoomID)
+	channelExists, err := bridge.ChannelMappingExists(req.BridgeChannelID)
 	if err != nil {
-		m.logger.LogError("Failed to check room existence", "bridge_room_id", req.BridgeRoomID, "error", err)
-		return fmt.Errorf("failed to check room existence: %w", err)
+		m.logger.LogError("Failed to check channel existence", "bridge_channel_id", req.BridgeChannelID, "error", err)
+		return fmt.Errorf("failed to check channel existence: %w", err)
 	}
-	if !roomExists {
-		m.logger.LogWarn("Room does not exist on bridge",
-			"bridge_room_id", req.BridgeRoomID,
+	if !channelExists {
+		m.logger.LogWarn("Channel does not exist on bridge",
+			"bridge_channel_id", req.BridgeChannelID,
 			"bridge_name", req.BridgeName)
-		return fmt.Errorf("room '%s' does not exist on %s bridge", req.BridgeRoomID, req.BridgeName)
+		return fmt.Errorf("channel '%s' does not exist on %s bridge", req.BridgeChannelID, req.BridgeName)
 	}
 
-	m.logger.LogDebug("Room validation passed",
-		"bridge_room_id", req.BridgeRoomID,
+	m.logger.LogDebug("Channel validation passed",
+		"bridge_channel_id", req.BridgeChannelID,
 		"bridge_name", req.BridgeName,
-		"room_exists", roomExists,
+		"channel_exists", channelExists,
 		"already_mapped", false)
 
 	// Create the channel mapping on the receiving bridge
-	if err = bridge.CreateChannelMapping(req.ChannelID, req.BridgeRoomID); err != nil {
-		m.logger.LogError("Failed to create channel mapping", "channel_id", req.ChannelID, "bridge_name", req.BridgeName, "bridge_room_id", req.BridgeRoomID, "error", err)
+	if err = bridge.CreateChannelMapping(req.ChannelID, req.BridgeChannelID); err != nil {
+		m.logger.LogError("Failed to create channel mapping", "channel_id", req.ChannelID, "bridge_name", req.BridgeName, "bridge_channel_id", req.BridgeChannelID, "error", err)
 		return fmt.Errorf("failed to create channel mapping for bridge '%s': %w", req.BridgeName, err)
 	}
 
@@ -324,19 +324,19 @@ func (m *BridgeManager) CreateChannelMapping(req model.CreateChannelMappingReque
 	}
 
 	// Create the channel mapping in the Mattermost bridge
-	if err = mattermostBridge.CreateChannelMapping(req.ChannelID, req.BridgeRoomID); err != nil {
-		m.logger.LogError("Failed to create channel mapping in Mattermost bridge", "channel_id", req.ChannelID, "bridge_name", req.BridgeName, "bridge_room_id", req.BridgeRoomID, "error", err)
+	if err = mattermostBridge.CreateChannelMapping(req.ChannelID, req.BridgeChannelID); err != nil {
+		m.logger.LogError("Failed to create channel mapping in Mattermost bridge", "channel_id", req.ChannelID, "bridge_name", req.BridgeName, "bridge_channel_id", req.BridgeChannelID, "error", err)
 		return fmt.Errorf("failed to create channel mapping in Mattermost bridge: %w", err)
 	}
 
 	// Share the channel using Mattermost's shared channels API
 	if err = m.shareChannel(req); err != nil {
-		m.logger.LogError("Failed to share channel", "channel_id", req.ChannelID, "bridge_room_id", req.BridgeRoomID, "error", err)
+		m.logger.LogError("Failed to share channel", "channel_id", req.ChannelID, "bridge_channel_id", req.BridgeChannelID, "error", err)
 		// Don't fail the entire operation if sharing fails, but log the error
 		m.logger.LogWarn("Channel mapping created but sharing failed - channel may not sync properly")
 	}
 
-	m.logger.LogInfo("Successfully created channel mapping", "channel_id", req.ChannelID, "bridge_name", req.BridgeName, "bridge_room_id", req.BridgeRoomID)
+	m.logger.LogInfo("Successfully created channel mapping", "channel_id", req.ChannelID, "bridge_name", req.BridgeName, "bridge_channel_id", req.BridgeChannelID)
 	return nil
 }
 
@@ -403,9 +403,9 @@ func (m *BridgeManager) shareChannel(req model.CreateChannelMappingRequest) erro
 		TeamId:           req.TeamID,
 		Home:             true,
 		ReadOnly:         false,
-		ShareName:        model.SanitizeShareName(fmt.Sprintf("bridge-%s", req.BridgeRoomID)),
-		ShareDisplayName: fmt.Sprintf("Bridge: %s", req.BridgeRoomID),
-		SharePurpose:     fmt.Sprintf("Shared channel bridged to %s", req.BridgeRoomID),
+		ShareName:        model.SanitizeShareName(fmt.Sprintf("bridge-%s", req.BridgeChannelID)),
+		ShareDisplayName: fmt.Sprintf("Bridge: %s", req.BridgeChannelID),
+		SharePurpose:     fmt.Sprintf("Shared channel bridged to %s", req.BridgeChannelID),
 		ShareHeader:      "test header",
 		CreatorId:        req.UserID,
 		RemoteId:         m.remoteID,
