@@ -550,3 +550,14 @@ func (m *BridgeManager) StopMessageRouting() error {
 	// Stop the message bus
 	return m.messageBus.Stop()
 }
+
+// PublishMessage publishes a message to the message bus for routing to target bridges
+func (m *BridgeManager) PublishMessage(msg *model.DirectionalMessage) error {
+	m.logger.LogDebug("Publishing message to message bus",
+		"source_bridge", msg.SourceBridge,
+		"direction", msg.Direction,
+		"target_bridges", msg.TargetBridges,
+		"message_id", msg.MessageID)
+
+	return m.messageBus.Publish(msg)
+}

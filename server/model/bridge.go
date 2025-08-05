@@ -120,6 +120,9 @@ type BridgeManager interface {
 
 	// DeleteChannepMapping is called when a channel mapping is deleted.
 	DeleteChannepMapping(req DeleteChannelMappingRequest) error
+
+	// PublishMessage publishes a message to the message bus for routing to target bridges
+	PublishMessage(msg *DirectionalMessage) error
 }
 
 type Bridge interface {
