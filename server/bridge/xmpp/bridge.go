@@ -16,6 +16,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/store/kvstore"
 	xmppClient "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/xmpp"
 	"github.com/mattermost/mattermost/server/public/plugin"
+	"mellium.im/xmlstream"
+	"mellium.im/xmpp/stanza"
 )
 
 const (
@@ -179,8 +181,6 @@ func (b *xmppBridge) Start() error {
 	// Start connection monitor
 	go b.connectionMonitor()
 
-	// Start message aggregation
-	go b.startMessageAggregation()
 
 	b.logger.LogInfo("Mattermost to XMPP bridge started successfully")
 	return nil
@@ -229,6 +229,8 @@ func (b *xmppBridge) connectToXMPP() error {
 	} else {
 		b.logger.LogDebug("Set bridge client online presence")
 	}
+
+	b.bridgeClient.SetMessageHandler(b.handleIncomingXMPPMessage)
 
 	return nil
 }
@@ -572,35 +574,6 @@ func (b *xmppBridge) GetUserManager() pluginModel.BridgeUserManager {
 	return b.userManager
 }
 
-// startMessageAggregation starts the message aggregation goroutine
-func (b *xmppBridge) startMessageAggregation() {
-	clientChannel := b.bridgeClient.GetMessageChannel()
-
-	for {
-		select {
-		case <-b.ctx.Done():
-			b.logger.LogDebug("Stopping XMPP message aggregation")
-			return
-		case msg, ok := <-clientChannel:
-			if !ok {
-				b.logger.LogDebug("Bridge client message channel closed")
-				return
-			}
-
-			// Forward to our bridge's message channel
-			select {
-			case b.incomingMessages <- msg:
-				// Message forwarded successfully
-			case <-b.ctx.Done():
-				return
-			default:
-				b.logger.LogWarn("Bridge message channel full, dropping message",
-					"source_channel", msg.SourceChannelID,
-					"user_id", msg.SourceUserID)
-			}
-		}
-	}
-}
 
 // GetMessageChannel returns the channel for incoming messages from XMPP
 func (b *xmppBridge) GetMessageChannel() <-chan *pluginModel.DirectionalMessage {
@@ -630,4 +603,73 @@ func (b *xmppBridge) GetRemoteID() string {
 // ID returns the bridge identifier used when registering the bridge
 func (b *xmppBridge) ID() string {
 	return b.bridgeID
+}
+
+// handleIncomingXMPPMessage handles incoming XMPP messages and converts them to bridge messages
+func (b *xmppBridge) handleIncomingXMPPMessage(msg stanza.Message, t xmlstream.TokenReadEncoder) error {
+	b.logger.LogDebug("XMPP bridge handling incoming message",
+		"from", msg.From.String(),
+		"to", msg.To.String(),
+		"type", fmt.Sprintf("%v", msg.Type))
+
+	// Only process groupchat messages for now (MUC messages from channels)
+	if msg.Type != stanza.GroupChatMessage {
+		b.logger.LogDebug("Ignoring non-groupchat message", "type", fmt.Sprintf("%v", msg.Type))
+		return nil
+	}
+
+	// Extract message body using client method
+	messageBody, err := b.bridgeClient.ExtractMessageBody(t)
+	if err != nil {
+		b.logger.LogWarn("Failed to extract message body", "error", err)
+		return nil
+	}
+
+	if messageBody == "" {
+		b.logger.LogDebug("Ignoring message with empty body")
+		return nil
+	}
+
+	// Use client methods for protocol normalization
+	channelID, err := b.bridgeClient.ExtractChannelID(msg.From)
+	if err != nil {
+		return fmt.Errorf("failed to extract channel ID: %w", err)
+	}
+
+	userID, displayName := b.bridgeClient.ExtractUserInfo(msg.From)
+
+	// Create bridge message
+	bridgeMessage := &pluginModel.BridgeMessage{
+		SourceBridge:    b.bridgeID,
+		SourceChannelID: channelID,
+		SourceUserID:    userID,
+		SourceUserName:  displayName,
+		SourceRemoteID:  b.remoteID,
+		Content:         messageBody,
+		MessageType:     "text",
+		Timestamp:       time.Now(), // TODO: Parse timestamp from message if available
+		MessageID:       msg.ID,
+		TargetBridges:   []string{"mattermost"}, // Route to Mattermost
+	}
+
+	// Create directional message for incoming (XMPP -> Mattermost)
+	directionalMessage := &pluginModel.DirectionalMessage{
+		BridgeMessage: bridgeMessage,
+		Direction:     pluginModel.DirectionIncoming,
+	}
+
+	// Send to bridge's message channel
+	select {
+	case b.incomingMessages <- directionalMessage:
+		b.logger.LogDebug("XMPP message queued for processing",
+			"channel_id", channelID,
+			"user_id", userID,
+			"message_id", msg.ID)
+	default:
+		b.logger.LogWarn("Bridge message channel full, dropping message",
+			"channel_id", channelID,
+			"user_id", userID)
+	}
+
+	return nil
 }

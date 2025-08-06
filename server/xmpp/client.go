@@ -12,7 +12,6 @@ import (
 
 	"github.com/jellydator/ttlcache/v3"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
-	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
 	"mellium.im/sasl"
 	"mellium.im/xmlstream"
 	"mellium.im/xmpp"
@@ -26,9 +25,6 @@ import (
 const (
 	// defaultOperationTimeout is the default timeout for XMPP operations
 	defaultOperationTimeout = 5 * time.Second
-
-	// msgBufferSize is the buffer size for incoming message channels
-	msgBufferSize = 1000
 
 	// messageDedupeTTL is the TTL for message deduplication cache
 	messageDedupeTTL = 30 * time.Second
@@ -56,7 +52,7 @@ type Client struct {
 	sessionServing bool
 
 	// Message handling for bridge integration
-	incomingMessages chan *model.DirectionalMessage
+	messageHandler   mux.MessageHandlerFunc // Bridge handler for incoming messages
 
 	// Message deduplication cache to handle XMPP server duplicates
 	dedupeCache *ttlcache.Cache[string, time.Time]
@@ -90,6 +86,12 @@ type XMPPMessage struct {
 	To      string      `xml:"to,attr"`
 	From    string      `xml:"from,attr"`
 	Body    MessageBody `xml:"body"`
+}
+
+// MessageWithBody represents a message stanza with body for parsing
+type MessageWithBody struct {
+	stanza.Message
+	Body    string   `xml:"body"`
 }
 
 // GhostUser represents an XMPP ghost user
@@ -126,7 +128,6 @@ func NewClient(serverURL, username, password, resource, remoteID string, logger 
 		ctx:              ctx,
 		cancel:           cancel,
 		sessionReady:     make(chan struct{}),
-		incomingMessages: make(chan *model.DirectionalMessage, msgBufferSize),
 		dedupeCache:      dedupeCache,
 	}
 
@@ -153,6 +154,11 @@ func NewClientWithTLS(serverURL, username, password, resource, remoteID string, 
 // SetServerDomain sets an explicit server domain (used for testing)
 func (c *Client) SetServerDomain(domain string) {
 	c.serverDomain = domain
+}
+
+// SetMessageHandler sets the bridge message handler for incoming XMPP messages
+func (c *Client) SetMessageHandler(handler mux.MessageHandlerFunc) {
+	c.messageHandler = handler
 }
 
 // parseServerAddress parses a server URL and returns a host:port address
@@ -352,6 +358,38 @@ func (c *Client) Disconnect() error {
 
 	c.logger.LogInfo("XMPP client disconnected successfully")
 	return nil
+}
+
+// ExtractChannelID extracts the channel ID (room bare JID) from a message JID
+func (c *Client) ExtractChannelID(from jid.JID) (string, error) {
+	// For MUC messages, the channel ID is the bare JID (without resource/nickname)
+	return from.Bare().String(), nil
+}
+
+// ExtractUserInfo extracts user ID and display name from a message JID
+func (c *Client) ExtractUserInfo(from jid.JID) (string, string) {
+	// For MUC messages, the resource part is the nickname
+	nickname := from.Resourcepart()
+
+	// Use the full JID as user ID for XMPP
+	userID := from.String()
+
+	// Use nickname as display name if available, otherwise use full JID
+	displayName := nickname
+	if displayName == "" {
+		displayName = from.String()
+	}
+
+	return userID, displayName
+}
+
+// ExtractMessageBody extracts the message body from an XMPP token stream
+func (c *Client) ExtractMessageBody(t xmlstream.TokenReadEncoder) (string, error) {
+	var fullMsg MessageWithBody
+	if err := xml.NewTokenDecoder(t).DecodeElement(&fullMsg, nil); err != nil {
+		return "", fmt.Errorf("failed to decode message body: %w", err)
+	}
+	return fullMsg.Body, nil
 }
 
 // JoinRoom joins an XMPP Multi-User Chat room
@@ -693,10 +731,6 @@ func (c *Client) Ping() error {
 	return nil
 }
 
-// GetMessageChannel returns the channel for incoming messages (Bridge interface)
-func (c *Client) GetMessageChannel() <-chan *model.DirectionalMessage {
-	return c.incomingMessages
-}
 
 // handleIncomingMessage processes incoming XMPP message stanzas
 func (c *Client) handleIncomingMessage(msg stanza.Message, t xmlstream.TokenReadEncoder) error {
@@ -711,28 +745,11 @@ func (c *Client) handleIncomingMessage(msg stanza.Message, t xmlstream.TokenRead
 		return nil
 	}
 
-	// Parse the message body from the token reader
-	var msgWithBody struct {
-		stanza.Message
-		Body string `xml:"body"`
-	}
-	msgWithBody.Message = msg
-
-	d := xml.NewTokenDecoder(t)
-	if err := d.DecodeElement(&msgWithBody, nil); err != nil {
-		c.logger.LogError("Failed to decode message body", "error", err)
-		return err
-	}
-
-	if msgWithBody.Body == "" {
-		c.logger.LogDebug("Message has no body, ignoring")
-		return nil
-	}
-
 	// Deduplicate messages using message ID and TTL cache
 	if msg.ID != "" {
 		// Check if this message ID is already in the cache (indicates duplicate)
 		if c.dedupeCache.Has(msg.ID) {
+			c.logger.LogDebug("Skipping duplicate message", "message_id", msg.ID)
 			return nil
 		}
 
@@ -740,70 +757,12 @@ func (c *Client) handleIncomingMessage(msg stanza.Message, t xmlstream.TokenRead
 		c.dedupeCache.Set(msg.ID, time.Now(), ttlcache.DefaultTTL)
 	}
 
-	// Extract channel and user information from JIDs
-	channelID, err := c.extractChannelID(msg.From)
-	if err != nil {
-		c.logger.LogError("Failed to extract channel ID from JID", "from", msg.From.String(), "error", err)
-		return nil
+	// Delegate to bridge handler if set
+	if c.messageHandler != nil {
+		return c.messageHandler(msg, t)
 	}
 
-	userID, userName := c.extractUserInfo(msg.From)
-
-	// Create BridgeMessage
-	bridgeMsg := &model.BridgeMessage{
-		SourceBridge:    "xmpp",
-		SourceChannelID: channelID,
-		SourceUserID:    userID,
-		SourceUserName:  userName,
-		Content:         msgWithBody.Body, // Already Markdown compatible
-		MessageType:     "text",
-		Timestamp:       time.Now(), // XMPP doesn't always provide timestamps
-		MessageID:       msg.ID,
-		TargetBridges:   []string{}, // Will be routed to all other bridges
-		Metadata: map[string]any{
-			"xmpp_from": msg.From.String(),
-			"xmpp_to":   msg.To.String(),
-		},
-	}
-
-	// Wrap in directional message
-	directionalMsg := &model.DirectionalMessage{
-		BridgeMessage: bridgeMsg,
-		Direction:     model.DirectionIncoming,
-	}
-
-	// Send to message channel (non-blocking)
-	select {
-	case c.incomingMessages <- directionalMsg:
-		// Message queued successfully
-	default:
-		c.logger.LogWarn("Message channel full, dropping message",
-			"channel_id", channelID,
-			"user_id", userID)
-	}
-
+	c.logger.LogDebug("No message handler set, ignoring message")
 	return nil
 }
 
-// extractChannelID extracts the channel ID (room bare JID) from a message JID
-func (c *Client) extractChannelID(from jid.JID) (string, error) {
-	// For MUC messages, the channel ID is the bare JID (without resource/nickname)
-	return from.Bare().String(), nil
-}
-
-// extractUserInfo extracts user ID and display name from a message JID
-func (c *Client) extractUserInfo(from jid.JID) (string, string) {
-	// For MUC messages, the resource part is the nickname
-	nickname := from.Resourcepart()
-
-	// Use the full JID as user ID for XMPP
-	userID := from.String()
-
-	// Use nickname as display name if available, otherwise use full JID
-	displayName := nickname
-	if displayName == "" {
-		displayName = from.String()
-	}
-
-	return userID, displayName
-}
