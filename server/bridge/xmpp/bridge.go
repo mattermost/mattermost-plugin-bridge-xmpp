@@ -30,6 +30,7 @@ type xmppBridge struct {
 	kvstore      kvstore.KVStore
 	bridgeClient *xmppClient.Client // Main bridge XMPP client connection
 	userManager  pluginModel.BridgeUserManager
+	bridgeID     string             // Bridge identifier used for registration
 	remoteID     string             // Remote ID for shared channels
 
 	// Message handling
@@ -52,7 +53,7 @@ type xmppBridge struct {
 }
 
 // NewBridge creates a new XMPP bridge
-func NewBridge(log logger.Logger, api plugin.API, kvstore kvstore.KVStore, cfg *config.Configuration, remoteID string) pluginModel.Bridge {
+func NewBridge(log logger.Logger, api plugin.API, kvstore kvstore.KVStore, cfg *config.Configuration, bridgeID, remoteID string) pluginModel.Bridge {
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &xmppBridge{
 		logger:           log,
@@ -62,8 +63,9 @@ func NewBridge(log logger.Logger, api plugin.API, kvstore kvstore.KVStore, cfg *
 		cancel:           cancel,
 		channelMappings:  make(map[string]string),
 		config:           cfg,
-		userManager:      bridge.NewUserManager("xmpp", log),
+		userManager:      bridge.NewUserManager(bridgeID, log),
 		incomingMessages: make(chan *pluginModel.DirectionalMessage, defaultMessageBufferSize),
+		bridgeID:         bridgeID,
 		remoteID:         remoteID,
 	}
 
@@ -623,4 +625,9 @@ func (b *xmppBridge) GetUserResolver() pluginModel.UserResolver {
 // GetRemoteID returns the remote ID used for shared channels registration
 func (b *xmppBridge) GetRemoteID() string {
 	return b.remoteID
+}
+
+// ID returns the bridge identifier used when registering the bridge
+func (b *xmppBridge) ID() string {
+	return b.bridgeID
 }

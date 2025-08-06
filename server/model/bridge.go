@@ -167,6 +167,9 @@ type Bridge interface {
 
 	// GetRemoteID returns the remote ID used for shared channels registration
 	GetRemoteID() string
+
+	// ID returns the bridge identifier used when registering the bridge
+	ID() string
 }
 
 // BridgeUser represents a user connected to any bridge service

@@ -148,6 +148,7 @@ func (p *Plugin) initBridges(cfg config.Configuration) error {
 		p.API,
 		p.kvstore,
 		&cfg,
+		"xmpp",
 		p.remoteID,
 	)
 
@@ -162,6 +163,7 @@ func (p *Plugin) initBridges(cfg config.Configuration) error {
 		p.kvstore,
 		&cfg,
 		p.botUserID,
+		"mattermost",
 		"mattermost",
 	)
 
