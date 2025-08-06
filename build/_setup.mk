@@ -5,9 +5,9 @@ ifeq ($(GO),)
 endif
 
 # Gather build variables to inject into the manifest tool
-BUILD_HASH_SHORT = $(shell git rev-parse --short HEAD)
+BUILD_HASH_SHORT = $(shell git rev-parse --short HEAD 2>/dev/null)
 BUILD_TAG_LATEST = $(shell git describe --tags --match 'v*' --abbrev=0 2>/dev/null)
-BUILD_TAG_CURRENT = $(shell git tag --points-at HEAD)
+BUILD_TAG_CURRENT = $(shell git tag --points-at HEAD 2>/dev/null)
 
 # Extract the plugin id from the manifest.
 PLUGIN_ID ?= $(shell pluginctl manifest get '{{.Id}}')

@@ -23,9 +23,6 @@ ASSETS_DIR ?= assets
 .PHONY: default
 default: all
 
-# Verify environment, and define PLUGIN_ID, PLUGIN_VERSION, HAS_SERVER and HAS_WEBAPP as needed.
-include build/setup.mk
-
 ifneq ($(MM_DEBUG),)
 	GO_BUILD_GCFLAGS = -gcflags "all=-N -l"
 else
