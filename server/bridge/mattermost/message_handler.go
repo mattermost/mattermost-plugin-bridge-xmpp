@@ -3,6 +3,7 @@ package mattermost
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
 	pluginModel "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
@@ -11,15 +12,18 @@ import (
 
 // mattermostMessageHandler handles incoming messages for the Mattermost bridge
 type mattermostMessageHandler struct {
-	bridge *mattermostBridge
-	logger logger.Logger
+	bridge    *mattermostBridge
+	logger    logger.Logger
+	userCache map[string]string // Maps "bridgeType:remoteID:userID" -> Mattermost user ID
+	cacheMu   sync.RWMutex      // Protects userCache
 }
 
 // newMessageHandler creates a new Mattermost message handler
 func newMessageHandler(bridge *mattermostBridge) *mattermostMessageHandler {
 	return &mattermostMessageHandler{
-		bridge: bridge,
-		logger: bridge.logger,
+		bridge:    bridge,
+		logger:    bridge.logger,
+		userCache: make(map[string]string),
 	}
 }
 
@@ -81,19 +85,20 @@ func (h *mattermostMessageHandler) postMessageToMattermost(msg *pluginModel.Brid
 		return fmt.Errorf("channel %s not found", channelID)
 	}
 
-	// Format the message content
-	content := h.formatMessageContent(msg)
+	// Get or create remote user for this message
+	remoteUserID, err := h.getOrCreateRemoteUser(msg)
+	if err != nil {
+		return fmt.Errorf("failed to get or create remote user: %w", err)
+	}
 
-	// Create the post
+	// Create the post using the remote user (no need for bridge formatting since it's posted as the actual user)
 	post := &mmModel.Post{
 		ChannelId: channelID,
-		UserId:    h.bridge.botUserID,
-		Message:   content,
+		UserId:    remoteUserID,
+		Message:   msg.Content,
 		Type:      mmModel.PostTypeDefault,
 		Props: map[string]interface{}{
 			"from_bridge":       msg.SourceBridge,
-			"bridge_user_id":    msg.SourceUserID,
-			"bridge_user_name":  msg.SourceUserName,
 			"bridge_message_id": msg.MessageID,
 			"bridge_timestamp":  msg.Timestamp.Unix(),
 		},
@@ -113,34 +118,123 @@ func (h *mattermostMessageHandler) postMessageToMattermost(msg *pluginModel.Brid
 	h.logger.LogDebug("Message posted to Mattermost channel",
 		"channel_id", channelID,
 		"post_id", createdPost.Id,
+		"remote_user_id", remoteUserID,
 		"source_bridge", msg.SourceBridge,
-		"content_length", len(content))
+		"source_user", msg.SourceUserName,
+		"content_length", len(msg.Content))
 
 	return nil
 }
 
-// formatMessageContent formats the message content for Mattermost
-func (h *mattermostMessageHandler) formatMessageContent(msg *pluginModel.BridgeMessage) string {
-	// For messages from other bridges, prefix with the bridge info and user name
-	if msg.SourceUserName != "" {
-		bridgeIcon := h.getBridgeIcon(msg.SourceBridge)
-		return fmt.Sprintf("%s **%s**: %s", bridgeIcon, msg.SourceUserName, msg.Content)
+// getOrCreateRemoteUser gets or creates a remote user for incoming bridge messages
+func (h *mattermostMessageHandler) getOrCreateRemoteUser(msg *pluginModel.BridgeMessage) (string, error) {
+	// Create cache key: "bridgeType:remoteID:userID"
+	cacheKey := fmt.Sprintf("%s:%s:%s", msg.SourceBridge, msg.SourceRemoteID, msg.SourceUserID)
+
+	// Check cache first
+	h.cacheMu.RLock()
+	if userID, exists := h.userCache[cacheKey]; exists {
+		h.cacheMu.RUnlock()
+		return userID, nil
 	}
-	return msg.Content
+	h.cacheMu.RUnlock()
+
+	// Lock for user creation
+	h.cacheMu.Lock()
+	defer h.cacheMu.Unlock()
+
+	// Double-check cache after acquiring lock
+	if userID, exists := h.userCache[cacheKey]; exists {
+		return userID, nil
+	}
+
+	// Generate username from source info
+	username := h.generateUsername(msg.SourceUserID, msg.SourceUserName, msg.SourceBridge)
+
+	// Generate email using bridge ID
+	email := fmt.Sprintf("%s@bridge.%s", username, h.bridge.bridgeID)
+
+	// First try to find existing user by username
+	if existingUser, appErr := h.bridge.api.GetUserByUsername(username); appErr == nil && existingUser != nil {
+		// Check if this user has the correct RemoteId
+		if existingUser.RemoteId != nil && *existingUser.RemoteId == msg.SourceRemoteID {
+			h.userCache[cacheKey] = existingUser.Id
+			h.logger.LogDebug("Found existing remote user",
+				"user_id", existingUser.Id,
+				"username", username,
+				"source_bridge", msg.SourceBridge,
+				"source_remote_id", msg.SourceRemoteID)
+			return existingUser.Id, nil
+		}
+	}
+
+	// Also try to find user by email
+	if existingUser, appErr := h.bridge.api.GetUserByEmail(email); appErr == nil && existingUser != nil {
+		// Check if this user has the correct RemoteId
+		if existingUser.RemoteId != nil && *existingUser.RemoteId == msg.SourceRemoteID {
+			h.userCache[cacheKey] = existingUser.Id
+			h.logger.LogDebug("Found existing remote user by email",
+				"user_id", existingUser.Id,
+				"email", email,
+				"source_bridge", msg.SourceBridge,
+				"source_remote_id", msg.SourceRemoteID)
+			return existingUser.Id, nil
+		}
+	}
+
+	// User doesn't exist, create the remote user
+	user := &mmModel.User{
+		Username:  username,
+		Email:     email,
+		FirstName: msg.SourceUserName,
+		Password:  mmModel.NewId(),
+		RemoteId:  &msg.SourceRemoteID,
+	}
+
+	// Try to create the user
+	createdUser, appErr := h.bridge.api.CreateUser(user)
+	if appErr != nil {
+		h.logger.LogError("Failed to create remote user",
+			"username", username,
+			"email", email,
+			"source_bridge", msg.SourceBridge,
+			"source_remote_id", msg.SourceRemoteID,
+			"error", appErr)
+		return "", fmt.Errorf("failed to create remote user: %w", appErr)
+	}
+
+	// Cache the result
+	h.userCache[cacheKey] = createdUser.Id
+
+	h.logger.LogInfo("Created remote user",
+		"user_id", createdUser.Id,
+		"username", username,
+		"email", email,
+		"source_bridge", msg.SourceBridge,
+		"source_remote_id", msg.SourceRemoteID)
+
+	return createdUser.Id, nil
 }
 
-// getBridgeIcon returns an icon/emoji for the source bridge
-func (h *mattermostMessageHandler) getBridgeIcon(bridgeType string) string {
-	switch bridgeType {
-	case "xmpp":
-		return ":speech_balloon:" // Chat bubble emoji for XMPP
-	case "slack":
-		return ":slack:" // Slack emoji if available
-	case "discord":
-		return ":discord:" // Discord emoji if available
-	default:
-		return ":bridge_at_night:" // Generic bridge emoji
+// generateUsername creates a username from source information
+func (h *mattermostMessageHandler) generateUsername(sourceUserID, sourceUserName, sourceBridge string) string {
+	var baseUsername string
+
+	// Prefer source user name, fallback to user ID
+	if sourceUserName != "" {
+		baseUsername = sourceUserName
+	} else {
+		baseUsername = sourceUserID
 	}
+
+	// Clean the username (remove invalid characters, make lowercase)
+	baseUsername = strings.ToLower(baseUsername)
+	baseUsername = strings.ReplaceAll(baseUsername, "@", "")
+	baseUsername = strings.ReplaceAll(baseUsername, ".", "")
+	baseUsername = strings.ReplaceAll(baseUsername, " ", "")
+
+	// Prefix with bridge type to avoid conflicts
+	return fmt.Sprintf("%s-%s", sourceBridge, baseUsername)
 }
 
 // mattermostUserResolver handles user resolution for the Mattermost bridge
