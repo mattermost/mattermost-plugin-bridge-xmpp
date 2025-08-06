@@ -11,9 +11,16 @@ all: check-style test dist
 manifest-check:
 	pluginctl manifest check
 
+## Cleans the server build artifacts.
+.PHONY: clean-server
+clean-server:
+ifneq ($(HAS_SERVER),)
+	rm -rf server/dist
+endif
 
 ## Builds the server, if it exists, for all supported architectures, unless MM_SERVICESETTINGS_ENABLEDEVELOPER is set.
 .PHONY: server
+server: clean-server
 server:
 ifneq ($(HAS_SERVER),)
 ifneq ($(MM_DEBUG),)
