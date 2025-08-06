@@ -4,10 +4,12 @@ go 1.24.3
 
 require (
 	github.com/gorilla/mux v1.8.1
+	github.com/jellydator/ttlcache/v3 v3.4.0
 	github.com/mattermost/mattermost/server/public v0.1.10
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.10.0
 	mellium.im/sasl v0.3.2
+	mellium.im/xmlstream v0.15.4
 	mellium.im/xmpp v0.22.0
 )
 
@@ -102,7 +104,6 @@ require (
 	github.com/hashicorp/yamux v0.1.2 // indirect
 	github.com/hexops/gotextdiff v1.0.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/jellydator/ttlcache/v3 v3.4.0 // indirect
 	github.com/jgautheron/goconst v1.7.1 // indirect
 	github.com/jingyugao/rowserrcheck v1.1.1 // indirect
 	github.com/jirfag/go-printf-func-name v0.0.0-20200119135958-7558a9eaa5af // indirect
@@ -226,7 +227,6 @@ require (
 	gotest.tools/gotestsum v1.7.0 // indirect
 	honnef.co/go/tools v0.5.1 // indirect
 	mellium.im/reader v0.1.0 // indirect
-	mellium.im/xmlstream v0.15.4 // indirect
 	mvdan.cc/gofumpt v0.7.0 // indirect
 	mvdan.cc/unparam v0.0.0-20240528143540-8a5130ca722f // indirect
 )
