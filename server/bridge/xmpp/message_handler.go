@@ -37,7 +37,7 @@ func (h *xmppMessageHandler) ProcessMessage(msg *pluginModel.DirectionalMessage)
 	}
 
 	// For incoming messages to XMPP, we send them to XMPP rooms
-	if msg.Direction == pluginModel.DirectionIncoming {
+	if msg.Direction == pluginModel.DirectionOutgoing {
 		return h.sendMessageToXMPP(msg.BridgeMessage)
 	}
 

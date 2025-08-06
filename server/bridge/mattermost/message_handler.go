@@ -3,7 +3,6 @@ package mattermost
 import (
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
 	pluginModel "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
@@ -12,18 +11,15 @@ import (
 
 // mattermostMessageHandler handles incoming messages for the Mattermost bridge
 type mattermostMessageHandler struct {
-	bridge    *mattermostBridge
-	logger    logger.Logger
-	userCache map[string]string // Maps "bridgeType:remoteID:userID" -> Mattermost user ID
-	cacheMu   sync.RWMutex      // Protects userCache
+	bridge *mattermostBridge
+	logger logger.Logger
 }
 
 // newMessageHandler creates a new Mattermost message handler
 func newMessageHandler(bridge *mattermostBridge) *mattermostMessageHandler {
 	return &mattermostMessageHandler{
-		bridge:    bridge,
-		logger:    bridge.logger,
-		userCache: make(map[string]string),
+		bridge: bridge,
+		logger: bridge.logger,
 	}
 }
 
@@ -91,6 +87,16 @@ func (h *mattermostMessageHandler) postMessageToMattermost(msg *pluginModel.Brid
 		return fmt.Errorf("failed to get or create remote user: %w", err)
 	}
 
+	if err := h.bridge.api.InviteRemoteToChannel(channelID, msg.SourceRemoteID, remoteUserID, true); err != nil {
+		h.logger.LogError("Failed to invite remote user to channel",
+			"channel_id", msg.SourceChannelID,
+			"remote_user_id", remoteUserID,
+			"source_bridge", msg.SourceBridge,
+			"source_remote_id", msg.SourceRemoteID,
+			"err", err.Error(),
+		)
+	}
+
 	// Create the post using the remote user (no need for bridge formatting since it's posted as the actual user)
 	post := &mmModel.Post{
 		ChannelId: channelID,
@@ -128,26 +134,6 @@ func (h *mattermostMessageHandler) postMessageToMattermost(msg *pluginModel.Brid
 
 // getOrCreateRemoteUser gets or creates a remote user for incoming bridge messages
 func (h *mattermostMessageHandler) getOrCreateRemoteUser(msg *pluginModel.BridgeMessage) (string, error) {
-	// Create cache key: "bridgeType:remoteID:userID"
-	cacheKey := fmt.Sprintf("%s:%s:%s", msg.SourceBridge, msg.SourceRemoteID, msg.SourceUserID)
-
-	// Check cache first
-	h.cacheMu.RLock()
-	if userID, exists := h.userCache[cacheKey]; exists {
-		h.cacheMu.RUnlock()
-		return userID, nil
-	}
-	h.cacheMu.RUnlock()
-
-	// Lock for user creation
-	h.cacheMu.Lock()
-	defer h.cacheMu.Unlock()
-
-	// Double-check cache after acquiring lock
-	if userID, exists := h.userCache[cacheKey]; exists {
-		return userID, nil
-	}
-
 	// Generate username from source info
 	username := h.generateUsername(msg.SourceUserID, msg.SourceUserName, msg.SourceBridge)
 
@@ -158,7 +144,6 @@ func (h *mattermostMessageHandler) getOrCreateRemoteUser(msg *pluginModel.Bridge
 	if existingUser, appErr := h.bridge.api.GetUserByUsername(username); appErr == nil && existingUser != nil {
 		// Check if this user has the correct RemoteId
 		if existingUser.RemoteId != nil && *existingUser.RemoteId == msg.SourceRemoteID {
-			h.userCache[cacheKey] = existingUser.Id
 			h.logger.LogDebug("Found existing remote user",
 				"user_id", existingUser.Id,
 				"username", username,
@@ -172,7 +157,6 @@ func (h *mattermostMessageHandler) getOrCreateRemoteUser(msg *pluginModel.Bridge
 	if existingUser, appErr := h.bridge.api.GetUserByEmail(email); appErr == nil && existingUser != nil {
 		// Check if this user has the correct RemoteId
 		if existingUser.RemoteId != nil && *existingUser.RemoteId == msg.SourceRemoteID {
-			h.userCache[cacheKey] = existingUser.Id
 			h.logger.LogDebug("Found existing remote user by email",
 				"user_id", existingUser.Id,
 				"email", email,
@@ -188,7 +172,7 @@ func (h *mattermostMessageHandler) getOrCreateRemoteUser(msg *pluginModel.Bridge
 		Email:     email,
 		FirstName: msg.SourceUserName,
 		Password:  mmModel.NewId(),
-		RemoteId:  &msg.SourceRemoteID,
+		RemoteId:  mmModel.NewPointer(msg.SourceRemoteID),
 	}
 
 	// Try to create the user
@@ -202,9 +186,6 @@ func (h *mattermostMessageHandler) getOrCreateRemoteUser(msg *pluginModel.Bridge
 			"error", appErr)
 		return "", fmt.Errorf("failed to create remote user: %w", appErr)
 	}
-
-	// Cache the result
-	h.userCache[cacheKey] = createdUser.Id
 
 	h.logger.LogInfo("Created remote user",
 		"user_id", createdUser.Id,

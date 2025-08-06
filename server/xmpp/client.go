@@ -161,6 +161,11 @@ func (c *Client) SetMessageHandler(handler mux.MessageHandlerFunc) {
 	c.messageHandler = handler
 }
 
+// GetJID returns the client's JID
+func (c *Client) GetJID() jid.JID {
+	return c.jidAddr
+}
+
 // parseServerAddress parses a server URL and returns a host:port address
 func (c *Client) parseServerAddress(serverURL string) (string, error) {
 	// Handle simple host:port format (e.g., "localhost:5222")

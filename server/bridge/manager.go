@@ -278,7 +278,7 @@ func (m *BridgeManager) CreateChannelMapping(req model.CreateChannelMappingReque
 		return fmt.Errorf("bridge '%s' is not connected", req.BridgeName)
 	}
 
-	// NEW: Check if room already mapped to another channel
+	// Check if channel mapping already exists on the bridge
 	existingChannelID, err := bridge.GetChannelMapping(req.BridgeChannelID)
 	if err != nil {
 		m.logger.LogError("Failed to check channel mapping", "bridge_channel_id", req.BridgeChannelID, "error", err)

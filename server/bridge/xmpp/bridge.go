@@ -32,8 +32,8 @@ type xmppBridge struct {
 	kvstore      kvstore.KVStore
 	bridgeClient *xmppClient.Client // Main bridge XMPP client connection
 	userManager  pluginModel.BridgeUserManager
-	bridgeID     string             // Bridge identifier used for registration
-	remoteID     string             // Remote ID for shared channels
+	bridgeID     string // Bridge identifier used for registration
+	remoteID     string // Remote ID for shared channels
 
 	// Message handling
 	messageHandler   *xmppMessageHandler
@@ -180,7 +180,6 @@ func (b *xmppBridge) Start() error {
 
 	// Start connection monitor
 	go b.connectionMonitor()
-
 
 	b.logger.LogInfo("Mattermost to XMPP bridge started successfully")
 	return nil
@@ -574,7 +573,6 @@ func (b *xmppBridge) GetUserManager() pluginModel.BridgeUserManager {
 	return b.userManager
 }
 
-
 // GetMessageChannel returns the channel for incoming messages from XMPP
 func (b *xmppBridge) GetMessageChannel() <-chan *pluginModel.DirectionalMessage {
 	return b.incomingMessages
@@ -637,6 +635,14 @@ func (b *xmppBridge) handleIncomingXMPPMessage(msg stanza.Message, t xmlstream.T
 	}
 
 	userID, displayName := b.bridgeClient.ExtractUserInfo(msg.From)
+
+	// Skip messages from our own XMPP user to prevent loops
+	if userID == b.bridgeClient.GetJID().String() {
+		b.logger.LogDebug("Skipping message from our own XMPP user to prevent loop",
+			"our_jid", b.bridgeClient.GetJID().String(),
+			"source_user_id", userID)
+		return nil
+	}
 
 	// Create bridge message
 	bridgeMessage := &pluginModel.BridgeMessage{

@@ -53,6 +53,8 @@ func (p *Plugin) OnSharedChannelsPing(remoteCluster *model.RemoteCluster) bool {
 
 // OnSharedChannelsSyncMsg processes sync messages from Mattermost shared channels and routes them to XMPP
 func (p *Plugin) OnSharedChannelsSyncMsg(msg *model.SyncMsg, rc *model.RemoteCluster) (model.SyncResponse, error) {
+	p.logger.LogDebug("🚀 OnSharedChannelsSyncMsg called", "remote_id", rc.RemoteId, "channel_id", msg.ChannelId)
+
 	config := p.getConfiguration()
 
 	// Initialize sync response
@@ -109,6 +111,30 @@ func (p *Plugin) OnSharedChannelsSyncMsg(msg *model.SyncMsg, rc *model.RemoteClu
 
 // processSyncPost converts a Mattermost post to a bridge message and routes it to XMPP
 func (p *Plugin) processSyncPost(post *model.Post, channelID string, users map[string]*model.User) error {
+	p.logger.LogDebug("Processing sync post", "post_id", post.Id, "channel_id", channelID, "users", users)
+
+	// Skip messages from our own bot user to prevent loops
+	if post.UserId == p.botUserID {
+		p.logger.LogDebug("Skipping message from bot user to prevent loop",
+			"bot_user_id", p.botUserID,
+			"post_user_id", post.UserId)
+		return nil
+	}
+
+	// Skip messages from remote users to prevent loops
+	// Remote users represent users from other bridges (e.g., XMPP users in Mattermost)
+	user, appErr := p.API.GetUser(post.UserId)
+	if appErr != nil {
+		p.logger.LogWarn("Failed to get user details for loop prevention. Ignoring message.", "user_id", post.UserId, "error", appErr)
+		return nil
+	} else if user != nil && user.RemoteId != nil && *user.RemoteId != "" {
+		p.logger.LogDebug("Skipping message from remote user to prevent loop",
+			"user_id", post.UserId,
+			"username", user.Username,
+			"remote_id", *user.RemoteId)
+		return nil
+	}
+
 	// Find the user who created this post
 	var postUser *model.User
 	p.logger.LogInfo("Processing sync post", "post_id", post.UserId, "users", users)
@@ -118,10 +144,10 @@ func (p *Plugin) processSyncPost(post *model.Post, channelID string, users map[s
 
 	// If user not found in sync data, try to get from API
 	if postUser == nil {
-		var err error
-		postUser, err = p.API.GetUser(post.UserId)
-		if err != nil {
-			p.logger.LogWarn("Failed to get user for post", "user_id", post.UserId, "post_id", post.Id, "error", err)
+		var appErr *model.AppError
+		postUser, appErr = p.API.GetUser(post.UserId)
+		if appErr != nil {
+			p.logger.LogWarn("Failed to get user for post", "user_id", post.UserId, "post_id", post.Id, "error", appErr)
 			// Create a placeholder user
 			postUser = &model.User{
 				Id:       post.UserId,
@@ -136,6 +162,7 @@ func (p *Plugin) processSyncPost(post *model.Post, channelID string, users map[s
 		SourceChannelID: channelID,
 		SourceUserID:    postUser.Id,
 		SourceUserName:  postUser.Username,
+		SourceRemoteID:  "", // This message comes from Mattermost, so no remote ID
 		Content:         post.Message,
 		MessageType:     "text", // TODO: Handle other message types
 		Timestamp:       time.Unix(post.CreateAt/1000, 0),
