@@ -29,6 +29,7 @@ type Config struct {
 	TestMUC            bool
 	TestDirectMessage  bool
 	TestRoomExists     bool
+	TestXEP0077        bool
 	Verbose            bool
 	InsecureSkipVerify bool
 }
@@ -45,6 +46,7 @@ func main() {
 	flag.BoolVar(&config.TestMUC, "test-muc", true, "Enable MUC room testing (join/wait/leave)")
 	flag.BoolVar(&config.TestDirectMessage, "test-dm", true, "Enable direct message testing (send message to admin user)")
 	flag.BoolVar(&config.TestRoomExists, "test-room-exists", true, "Enable room existence testing using disco#info")
+	flag.BoolVar(&config.TestXEP0077, "test-xep0077", true, "Enable XEP-0077 In-Band Registration testing (required if enabled)")
 	flag.BoolVar(&config.Verbose, "verbose", true, "Enable verbose logging")
 	flag.BoolVar(&config.InsecureSkipVerify, "insecure-skip-verify", true, "Skip TLS certificate verification (for development)")
 
@@ -86,6 +88,9 @@ func main() {
 		if config.TestRoomExists {
 			log.Printf("  Test Room Existence: enabled")
 		}
+		if config.TestXEP0077 {
+			log.Printf("  Test XEP-0077 In-Band Registration: enabled")
+		}
 	}
 
 	// Test the XMPP client
@@ -97,6 +102,9 @@ func main() {
 		log.Printf("✅ XMPP client test completed successfully!")
 	} else {
 		fmt.Println("✅ XMPP client connectivity test passed!")
+		if config.TestXEP0077 {
+			fmt.Println("✅ XMPP XEP-0077 In-Band Registration test passed!")
+		}
 		if config.TestMUC {
 			fmt.Println("✅ XMPP MUC operations test passed!")
 		}
@@ -175,9 +183,20 @@ func testXMPPClient(config *Config) error {
 		log.Printf("✅ Connection health test passed in %v", pingDuration)
 	}
 
+	var xep0077Duration time.Duration
 	var mucDuration time.Duration
 	var dmDuration time.Duration
 	var roomExistsDuration time.Duration
+
+	// Test XEP-0077 In-Band Registration if requested
+	if config.TestXEP0077 {
+		start = time.Now()
+		err = testXEP0077(client, config)
+		if err != nil {
+			return fmt.Errorf("XEP-0077 In-Band Registration test failed: %w", err)
+		}
+		xep0077Duration = time.Since(start)
+	}
 
 	// Test MUC operations if requested
 	if config.TestMUC {
@@ -226,6 +245,9 @@ func testXMPPClient(config *Config) error {
 		log.Printf("Connection summary:")
 		log.Printf("  Connect time: %v", connectDuration)
 		log.Printf("  Ping time: %v", pingDuration)
+		if config.TestXEP0077 {
+			log.Printf("  XEP-0077 test time: %v", xep0077Duration)
+		}
 		if config.TestMUC {
 			log.Printf("  MUC operations time: %v", mucDuration)
 		}
@@ -237,6 +259,9 @@ func testXMPPClient(config *Config) error {
 		}
 		log.Printf("  Disconnect time: %v", disconnectDuration)
 		totalTime := connectDuration + pingDuration + disconnectDuration
+		if config.TestXEP0077 {
+			totalTime += xep0077Duration
+		}
 		if config.TestMUC {
 			totalTime += mucDuration
 		}
@@ -447,4 +472,121 @@ func (l *SimpleLogger) LogWarn(msg string, args ...interface{}) {
 // LogError logs error messages
 func (l *SimpleLogger) LogError(msg string, args ...interface{}) {
 	log.Printf("[ERROR] "+msg, args...)
+}
+
+// testXEP0077 tests XEP-0077 In-Band Registration functionality by creating and deleting a test user
+func testXEP0077(client *xmpp.Client, config *Config) error {
+	if config.Verbose {
+		log.Printf("Testing XEP-0077 In-Band Registration functionality...")
+	}
+
+	// First, wait for server capability detection to complete
+	// This is handled asynchronously in the client Connect method
+	time.Sleep(2 * time.Second)
+
+	// Check if server supports XEP-0077 
+	inBandReg, err := client.GetInBandRegistration()
+	if err != nil {
+		return fmt.Errorf("server does not support XEP-0077 In-Band Registration: %w", err)
+	}
+
+	if !inBandReg.IsEnabled() {
+		return fmt.Errorf("XEP-0077 In-Band Registration is not enabled on this server")
+	}
+
+	if config.Verbose {
+		log.Printf("✅ Server supports XEP-0077 In-Band Registration")
+	}
+
+	serverJID := client.GetJID().Domain()
+	
+	// Step 1: Test registration fields discovery
+	start := time.Now()
+	if config.Verbose {
+		log.Printf("Testing registration fields discovery for server: %s", serverJID.String())
+	}
+
+	fields, err := inBandReg.GetRegistrationFields(serverJID)
+	if err != nil {
+		return fmt.Errorf("failed to get registration fields from server: %w", err)
+	}
+	fieldsDuration := time.Since(start)
+
+	if config.Verbose {
+		log.Printf("✅ Registration fields discovery completed in %v", fieldsDuration)
+		log.Printf("Registration fields: required=%v, available=%d", fields.Required, len(fields.Fields))
+	}
+
+	// Step 2: Create test user
+	testUsername := fmt.Sprintf("xmpptest%d", time.Now().Unix())
+	testPassword := "testpass123"
+	testEmail := fmt.Sprintf("%s@localhost", testUsername)
+
+	if config.Verbose {
+		log.Printf("Creating test user: %s", testUsername)
+	}
+
+	registrationRequest := &xmpp.RegistrationRequest{
+		Username: testUsername,
+		Password: testPassword,
+		Email:    testEmail,
+	}
+
+	start = time.Now()
+	regResponse, err := inBandReg.RegisterAccount(serverJID, registrationRequest)
+	if err != nil {
+		return fmt.Errorf("failed to register test user '%s': %w", testUsername, err)
+	}
+	registerDuration := time.Since(start)
+
+	if !regResponse.Success {
+		return fmt.Errorf("user registration failed: %s", regResponse.Error)
+	}
+
+	if config.Verbose {
+		log.Printf("✅ Test user '%s' registered successfully in %v", testUsername, registerDuration)
+		log.Printf("Registration response: %s", regResponse.Message)
+	}
+
+	// Step 3: Delete test user (cleanup)
+	if config.Verbose {
+		log.Printf("Cleaning up: removing test user '%s'", testUsername)
+	}
+
+	start = time.Now()
+	cancelResponse, err := inBandReg.CancelRegistration(serverJID)
+	if err != nil {
+		if config.Verbose {
+			log.Printf("⚠️  Failed to remove test user '%s': %v", testUsername, err)
+			log.Printf("⚠️  Manual cleanup may be required")
+		}
+	} else {
+		cancelDuration := time.Since(start)
+		if cancelResponse.Success {
+			if config.Verbose {
+				log.Printf("✅ Test user '%s' removed successfully in %v", testUsername, cancelDuration)
+			}
+		} else {
+			if config.Verbose {
+				log.Printf("⚠️  User removal may have failed: %s", cancelResponse.Error)
+			}
+		}
+	}
+
+	if config.Verbose {
+		log.Printf("XEP-0077 test summary:")
+		log.Printf("  Server support check: ✅")
+		log.Printf("  Registration fields discovery time: %v", fieldsDuration)
+		log.Printf("  User registration time: %v", registerDuration)
+		log.Printf("  Test username: %s", testUsername)
+		log.Printf("  Required fields count: %d", len(fields.Required))
+		log.Printf("  User creation: ✅")
+		if err == nil && cancelResponse.Success {
+			log.Printf("  User cleanup: ✅")
+		} else {
+			log.Printf("  User cleanup: ⚠️")
+		}
+	}
+
+	return nil
 }

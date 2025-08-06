@@ -57,6 +57,9 @@ type Client struct {
 
 	// Message deduplication cache to handle XMPP server duplicates
 	dedupeCache *ttlcache.Cache[string, time.Time]
+
+	// XEP features manager for handling XMPP extension protocols
+	XEPFeatures *XEPFeatures
 }
 
 // MessageRequest represents a request to send a message.
@@ -132,6 +135,7 @@ func NewClient(serverURL, username, password, resource, remoteID string, log log
 		cancel:       cancel,
 		sessionReady: make(chan struct{}),
 		dedupeCache:  dedupeCache,
+		XEPFeatures:  NewXEPFeatures(log),
 	}
 
 	// Create MUC client and set up message handling
@@ -167,6 +171,70 @@ func (c *Client) SetMessageHandler(handler mux.MessageHandlerFunc) {
 // GetJID returns the client's JID
 func (c *Client) GetJID() jid.JID {
 	return c.jidAddr
+}
+
+// GetInBandRegistration returns the InBandRegistration XEP handler for registration operations
+func (c *Client) GetInBandRegistration() (*InBandRegistration, error) {
+	if c.XEPFeatures.InBandRegistration == nil {
+		return nil, fmt.Errorf("InBandRegistration XEP not available")
+	}
+
+	return c.XEPFeatures.InBandRegistration, nil
+}
+
+// detectServerCapabilities discovers which XEPs are supported by the server
+func (c *Client) detectServerCapabilities() {
+	if c.session == nil {
+		c.logger.LogError("Cannot detect server capabilities: no session")
+		return
+	}
+
+	c.logger.LogDebug("Detecting server capabilities for XEP support")
+
+	// Check for XEP-0077 In-Band Registration support
+	if c.checkInBandRegistrationSupport() {
+		// Only create and initialize the InBandRegistration XEP if server supports it
+		inBandReg := NewInBandRegistration(c, c.logger)
+		c.XEPFeatures.InBandRegistration = inBandReg
+		c.logger.LogInfo("Initialized XEP-0077 In-Band Registration support")
+	} else {
+		c.logger.LogDebug("Server does not support XEP-0077 In-Band Registration - feature not initialized")
+	}
+
+	enabledFeatures := c.XEPFeatures.ListFeatures()
+	c.logger.LogInfo("Server capability detection completed", "enabled_xeps", enabledFeatures)
+}
+
+// checkInBandRegistrationSupport checks if the server supports XEP-0077 In-Band Registration
+func (c *Client) checkInBandRegistrationSupport() bool {
+	if c.session == nil {
+		return false
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+	defer cancel()
+
+	c.logger.LogDebug("Checking server support for XEP-0077 In-Band Registration")
+
+	// Use disco#info to query the server for registration support
+	serverDomain := c.jidAddr.Domain()
+	info, err := disco.GetInfo(ctx, "", serverDomain, c.session)
+	if err != nil {
+		c.logger.LogDebug("Failed to get server disco info for registration check", "error", err)
+		return false
+	}
+
+	// Check for the registration feature in server features
+	for _, feature := range info.Features {
+		if feature.Var == NSRegister {
+			c.logger.LogDebug("Server supports XEP-0077 In-Band Registration", "feature", feature.Var)
+			return true
+		}
+	}
+
+	c.logger.LogDebug("Server does not advertise XEP-0077 In-Band Registration support")
+	return false
 }
 
 // parseServerAddress parses a server URL and returns a host:port address
@@ -287,6 +355,10 @@ func (c *Client) Connect() error {
 			return fmt.Errorf("failed to start session serving")
 		}
 		c.logger.LogInfo("XMPP client connected successfully", "jid", c.jidAddr.String())
+
+		// Detect server capabilities and enable supported XEPs
+		go c.detectServerCapabilities()
+
 		return nil
 	case <-time.After(10 * time.Second):
 		return fmt.Errorf("timeout waiting for session to be ready")
