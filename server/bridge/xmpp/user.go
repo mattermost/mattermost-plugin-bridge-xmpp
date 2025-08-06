@@ -15,6 +15,8 @@ import (
 )
 
 // XMPPUser represents an XMPP user that implements the BridgeUser interface
+//
+//nolint:revive // XMPPUser is clearer than User in this context
 type XMPPUser struct {
 	// User identity
 	id          string
@@ -41,12 +43,12 @@ type XMPPUser struct {
 }
 
 // NewXMPPUser creates a new XMPP user
-func NewXMPPUser(id, displayName, jid string, cfg *config.Configuration, logger logger.Logger) *XMPPUser {
+func NewXMPPUser(id, displayName, jid string, cfg *config.Configuration, log logger.Logger) *XMPPUser {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create TLS config based on certificate verification setting
 	tlsConfig := &tls.Config{
-		InsecureSkipVerify: cfg.XMPPInsecureSkipVerify,
+		InsecureSkipVerify: cfg.XMPPInsecureSkipVerify, //nolint:gosec // Allow insecure TLS for testing environments
 	}
 
 	// Create XMPP client for this user
@@ -57,7 +59,7 @@ func NewXMPPUser(id, displayName, jid string, cfg *config.Configuration, logger 
 		cfg.GetXMPPResource(),
 		id, // Use user ID as remote ID
 		tlsConfig,
-		logger,
+		log,
 	)
 
 	return &XMPPUser{
@@ -69,7 +71,7 @@ func NewXMPPUser(id, displayName, jid string, cfg *config.Configuration, logger 
 		config:      cfg,
 		ctx:         ctx,
 		cancel:      cancel,
-		logger:      logger,
+		logger:      log,
 	}
 }
 
@@ -171,7 +173,7 @@ func (u *XMPPUser) SendMessageToChannel(channelID, message string) error {
 		Message:      message,
 	}
 
-	_, err := u.client.SendMessage(req)
+	_, err := u.client.SendMessage(&req)
 	if err != nil {
 		return fmt.Errorf("failed to send message to XMPP room %s: %w", channelID, err)
 	}

@@ -28,7 +28,7 @@ type CreateChannelMappingRequest struct {
 }
 
 // Validate checks if all required fields are present and valid
-func (r CreateChannelMappingRequest) Validate() error {
+func (r *CreateChannelMappingRequest) Validate() error {
 	if r.ChannelID == "" {
 		return fmt.Errorf("channelID cannot be empty")
 	}
@@ -116,7 +116,7 @@ type BridgeManager interface {
 	OnPluginConfigurationChange(config *config.Configuration) error
 
 	// CreateChannelMapping is called when a channel mapping is created.
-	CreateChannelMapping(req CreateChannelMappingRequest) error
+	CreateChannelMapping(req *CreateChannelMappingRequest) error
 
 	// DeleteChannepMapping is called when a channel mapping is deleted.
 	DeleteChannepMapping(req DeleteChannelMappingRequest) error

@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	pluginModel "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
 	"github.com/mattermost/mattermost/server/public/model"
+
+	pluginModel "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
 )
 
 // OnSharedChannelsPing is called to check if the bridge is healthy and ready to process messages
@@ -53,7 +54,10 @@ func (p *Plugin) OnSharedChannelsPing(remoteCluster *model.RemoteCluster) bool {
 
 // OnSharedChannelsSyncMsg processes sync messages from Mattermost shared channels and routes them to XMPP
 func (p *Plugin) OnSharedChannelsSyncMsg(msg *model.SyncMsg, rc *model.RemoteCluster) (model.SyncResponse, error) {
-	p.logger.LogDebug("🚀 OnSharedChannelsSyncMsg called", "remote_id", rc.RemoteId, "channel_id", msg.ChannelId)
+	var remoteClusterID string
+	if rc != nil {
+		remoteClusterID = rc.RemoteId
+	}
 
 	config := p.getConfiguration()
 
@@ -63,11 +67,6 @@ func (p *Plugin) OnSharedChannelsSyncMsg(msg *model.SyncMsg, rc *model.RemoteClu
 		PostsLastUpdateAt:     now,
 		UsersLastUpdateAt:     now,
 		ReactionsLastUpdateAt: now,
-	}
-
-	var remoteClusterID string
-	if rc != nil {
-		remoteClusterID = rc.RemoteId
 	}
 
 	p.logger.LogDebug("OnSharedChannelsSyncMsg called",

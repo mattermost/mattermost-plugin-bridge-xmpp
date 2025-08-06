@@ -6,6 +6,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
+	"github.com/pkg/errors"
+
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/bridge"
 	mattermostbridge "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/bridge/mattermost"
 	xmppbridge "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/bridge/xmpp"
@@ -14,11 +20,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
 	pluginModel "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/store/kvstore"
-	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/mattermost/mattermost/server/public/plugin"
-	"github.com/mattermost/mattermost/server/public/pluginapi"
-	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
-	"github.com/pkg/errors"
 )
 
 // Plugin implements the interface expected by the Mattermost server to communicate between the server and plugin processes.
@@ -78,7 +79,7 @@ func (p *Plugin) OnActivate() error {
 	p.bridgeManager = bridge.NewBridgeManager(p.logger, p.API, p.remoteID)
 
 	// Initialize and register bridges with current configuration
-	if err := p.initBridges(*cfg); err != nil {
+	if err := p.initBridges(cfg); err != nil {
 		return fmt.Errorf("failed to initialize bridges: %w", err)
 	}
 
@@ -141,13 +142,13 @@ func (p *Plugin) ExecuteCommand(c *plugin.Context, args *model.CommandArgs) (*mo
 	return response, nil
 }
 
-func (p *Plugin) initBridges(cfg config.Configuration) error {
+func (p *Plugin) initBridges(cfg *config.Configuration) error {
 	// Create and register XMPP bridge
 	xmppBridge := xmppbridge.NewBridge(
 		p.logger,
 		p.API,
 		p.kvstore,
-		&cfg,
+		cfg,
 		"xmpp",
 		p.remoteID,
 	)
@@ -161,7 +162,7 @@ func (p *Plugin) initBridges(cfg config.Configuration) error {
 		p.logger,
 		p.API,
 		p.kvstore,
-		&cfg,
+		cfg,
 		p.botUserID,
 		"mattermost",
 		"mattermost",

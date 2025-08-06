@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"strings"
 
-	pluginModel "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
+
+	pluginModel "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
 )
 
 type Handler struct {
@@ -183,7 +184,7 @@ func (c *Handler) executeMapCommand(args *model.CommandArgs, fields []string) *m
 		TeamID:          args.TeamId,
 	}
 
-	err = c.bridgeManager.CreateChannelMapping(mappingReq)
+	err = c.bridgeManager.CreateChannelMapping(&mappingReq)
 	if err != nil {
 		return c.formatMappingError("create", roomJID, err)
 	}
@@ -265,11 +266,12 @@ func (c *Handler) executeStatusCommand(args *model.CommandArgs) *model.CommandRe
 	roomJID, err := bridge.GetChannelMapping(channelID)
 
 	var mappingText string
-	if err != nil {
+	switch {
+	case err != nil:
 		mappingText = fmt.Sprintf("⚠️ Error checking channel mapping: %v", err)
-	} else if roomJID != "" {
+	case roomJID != "":
 		mappingText = fmt.Sprintf("🔗 **Current channel mapping:** `%s`", roomJID)
-	} else {
+	default:
 		mappingText = "📝 **Current channel:** Not mapped to any XMPP room"
 	}
 

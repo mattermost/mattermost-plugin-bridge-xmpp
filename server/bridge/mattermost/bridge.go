@@ -6,12 +6,13 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/mattermost/mattermost/server/public/plugin"
+
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/bridge"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/config"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
 	pluginModel "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/store/kvstore"
-	"github.com/mattermost/mattermost/server/public/plugin"
 )
 
 const (
@@ -49,12 +50,12 @@ type mattermostBridge struct {
 }
 
 // NewBridge creates a new Mattermost bridge
-func NewBridge(log logger.Logger, api plugin.API, kvstore kvstore.KVStore, cfg *config.Configuration, botUserID, bridgeID, remoteID string) pluginModel.Bridge {
+func NewBridge(log logger.Logger, api plugin.API, store kvstore.KVStore, cfg *config.Configuration, botUserID, bridgeID, remoteID string) pluginModel.Bridge {
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &mattermostBridge{
 		logger:           log,
 		api:              api,
-		kvstore:          kvstore,
+		kvstore:          store,
 		botUserID:        botUserID,
 		bridgeID:         bridgeID,
 		remoteID:         remoteID,
@@ -71,13 +72,6 @@ func NewBridge(log logger.Logger, api plugin.API, kvstore kvstore.KVStore, cfg *
 	b.userResolver = newUserResolver(b)
 
 	return b
-}
-
-// getConfiguration safely retrieves the current configuration
-func (b *mattermostBridge) getConfiguration() *config.Configuration {
-	b.configMu.RLock()
-	defer b.configMu.RUnlock()
-	return b.config
 }
 
 // UpdateConfiguration updates the bridge configuration
@@ -102,10 +96,10 @@ func (b *mattermostBridge) Start() error {
 	b.logger.LogDebug("Starting Mattermost bridge")
 
 	b.configMu.RLock()
-	config := b.config
+	cfg := b.config
 	b.configMu.RUnlock()
 
-	if config == nil {
+	if cfg == nil {
 		return fmt.Errorf("bridge configuration not set")
 	}
 
@@ -207,11 +201,11 @@ func (b *mattermostBridge) IsConnected() bool {
 // Ping actively tests the Mattermost API connectivity
 func (b *mattermostBridge) Ping() error {
 	if !b.connected.Load() {
-		return fmt.Errorf("Mattermost bridge is not connected")
+		return fmt.Errorf("mattermost bridge is not connected")
 	}
 
 	if b.api == nil {
-		return fmt.Errorf("Mattermost API not initialized")
+		return fmt.Errorf("mattermost API not initialized")
 	}
 
 	b.logger.LogDebug("Testing Mattermost bridge connectivity with API ping")
@@ -221,7 +215,7 @@ func (b *mattermostBridge) Ping() error {
 	version := b.api.GetServerVersion()
 	if version == "" {
 		b.logger.LogWarn("Mattermost bridge ping returned empty version")
-		return fmt.Errorf("Mattermost API ping returned empty server version")
+		return fmt.Errorf("mattermost API ping returned empty server version")
 	}
 
 	b.logger.LogDebug("Mattermost bridge ping successful", "server_version", version)
@@ -313,7 +307,7 @@ func (b *mattermostBridge) DeleteChannelMapping(channelID string) error {
 // ChannelMappingExists checks if a Mattermost channel exists on the server
 func (b *mattermostBridge) ChannelMappingExists(roomID string) (bool, error) {
 	if b.api == nil {
-		return false, fmt.Errorf("Mattermost API not initialized")
+		return false, fmt.Errorf("mattermost API not initialized")
 	}
 
 	b.logger.LogDebug("Checking if Mattermost channel exists", "channel_id", roomID)

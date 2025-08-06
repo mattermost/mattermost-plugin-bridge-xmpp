@@ -85,7 +85,7 @@ func (h *xmppMessageHandler) sendMessageToXMPP(msg *pluginModel.BridgeMessage) e
 	}
 
 	// Send the message
-	_, err = h.bridge.bridgeClient.SendMessage(req)
+	_, err = h.bridge.bridgeClient.SendMessage(&req)
 	if err != nil {
 		return fmt.Errorf("failed to send message to XMPP room: %w", err)
 	}
@@ -144,7 +144,7 @@ func (r *xmppUserResolver) FormatUserMention(user *pluginModel.ExternalUser) str
 func (r *xmppUserResolver) GetDisplayName(externalUserID string) string {
 	// For XMPP JIDs, extract the local part or resource as display name
 	// Format: user@domain/resource -> use resource or user
-	if len(externalUserID) == 0 {
+	if externalUserID == "" {
 		return "Unknown User"
 	}
 

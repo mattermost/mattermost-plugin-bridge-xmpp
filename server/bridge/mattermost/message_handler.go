@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"strings"
 
+	mmModel "github.com/mattermost/mattermost/server/public/model"
+
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
 	pluginModel "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
-	mmModel "github.com/mattermost/mattermost/server/public/model"
 )
 
 // mattermostMessageHandler handles incoming messages for the Mattermost bridge
@@ -59,7 +60,7 @@ func (h *mattermostMessageHandler) GetSupportedMessageTypes() []string {
 // postMessageToMattermost posts a message to a Mattermost channel
 func (h *mattermostMessageHandler) postMessageToMattermost(msg *pluginModel.BridgeMessage) error {
 	if h.bridge.api == nil {
-		return fmt.Errorf("Mattermost API not initialized")
+		return fmt.Errorf("mattermost API not initialized")
 	}
 
 	// Get the Mattermost channel ID from the channel mapping using the source bridge name
@@ -243,7 +244,7 @@ func (r *mattermostUserResolver) ResolveUser(externalUserID string) (*pluginMode
 	}
 
 	if user == nil {
-		return nil, fmt.Errorf("Mattermost user not found: %s", externalUserID)
+		return nil, fmt.Errorf("mattermost user not found: %s", externalUserID)
 	}
 
 	return &pluginModel.ExternalUser{

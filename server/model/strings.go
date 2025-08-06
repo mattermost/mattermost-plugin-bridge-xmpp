@@ -22,12 +22,12 @@ func SanitizeShareName(name string) string {
 	}
 
 	// Ensure it starts with alphanumeric
-	for len(result) > 0 && (result[0] == '-' || result[0] == '_') {
+	for result != "" && (result[0] == '-' || result[0] == '_') {
 		result = result[1:]
 	}
 
 	// Ensure it ends with alphanumeric
-	for len(result) > 0 && (result[len(result)-1] == '-' || result[len(result)-1] == '_') {
+	for result != "" && (result[len(result)-1] == '-' || result[len(result)-1] == '_') {
 		result = result[:len(result)-1]
 	}
 

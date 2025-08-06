@@ -5,14 +5,17 @@ import (
 	"fmt"
 	"sync"
 
+	mmModel "github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin"
+
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/config"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
-	mmModel "github.com/mattermost/mattermost/server/public/model"
-	"github.com/mattermost/mattermost/server/public/plugin"
 )
 
 // BridgeManager manages multiple bridge instances
+//
+//nolint:revive // BridgeManager is clearer than Manager in this context
 type BridgeManager struct {
 	bridges       map[string]model.Bridge
 	mu            sync.RWMutex
@@ -26,22 +29,15 @@ type BridgeManager struct {
 }
 
 // NewBridgeManager creates a new bridge manager
-func NewBridgeManager(logger logger.Logger, api plugin.API, remoteID string) model.BridgeManager {
-	if logger == nil {
-		panic("logger cannot be nil")
-	}
-	if api == nil {
-		panic("plugin API cannot be nil")
-	}
-
+func NewBridgeManager(log logger.Logger, api plugin.API, remoteID string) model.BridgeManager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &BridgeManager{
 		bridges:       make(map[string]model.Bridge),
-		logger:        logger,
+		logger:        log,
 		api:           api,
 		remoteID:      remoteID,
-		messageBus:    NewMessageBus(logger),
+		messageBus:    NewMessageBus(log),
 		routingCtx:    ctx,
 		routingCancel: cancel,
 	}
@@ -229,7 +225,7 @@ func (m *BridgeManager) Shutdown() error {
 }
 
 // OnPluginConfigurationChange propagates configuration changes to all registered bridges
-func (m *BridgeManager) OnPluginConfigurationChange(config *config.Configuration) error {
+func (m *BridgeManager) OnPluginConfigurationChange(cfg *config.Configuration) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -241,7 +237,7 @@ func (m *BridgeManager) OnPluginConfigurationChange(config *config.Configuration
 
 	var errors []error
 	for name, bridge := range m.bridges {
-		if err := bridge.UpdateConfiguration(config); err != nil {
+		if err := bridge.UpdateConfiguration(cfg); err != nil {
 			errors = append(errors, fmt.Errorf("failed to update configuration for bridge '%s': %w", name, err))
 			m.logger.LogError("Failed to update bridge configuration", "bridge_id", name, "error", err)
 		} else {
@@ -258,7 +254,7 @@ func (m *BridgeManager) OnPluginConfigurationChange(config *config.Configuration
 }
 
 // CreateChannelMapping handles the creation of a channel mapping by calling the appropriate bridge
-func (m *BridgeManager) CreateChannelMapping(req model.CreateChannelMappingRequest) error {
+func (m *BridgeManager) CreateChannelMapping(req *model.CreateChannelMappingRequest) error {
 	// Validate request
 	if err := req.Validate(); err != nil {
 		return fmt.Errorf("invalid mapping request: %w", err)
@@ -392,7 +388,7 @@ func (m *BridgeManager) DeleteChannepMapping(req model.DeleteChannelMappingReque
 }
 
 // shareChannel creates a shared channel configuration using the Mattermost API
-func (m *BridgeManager) shareChannel(req model.CreateChannelMappingRequest) error {
+func (m *BridgeManager) shareChannel(req *model.CreateChannelMappingRequest) error {
 	if m.remoteID == "" {
 		return fmt.Errorf("remote ID not set - plugin not registered for shared channels")
 	}

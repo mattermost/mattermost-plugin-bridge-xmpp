@@ -3,8 +3,9 @@ package main
 import (
 	"reflect"
 
-	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/config"
 	"github.com/pkg/errors"
+
+	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/config"
 )
 
 // getConfiguration retrieves the active configuration under lock, making it safe to use

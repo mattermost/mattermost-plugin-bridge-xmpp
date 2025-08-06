@@ -6,14 +6,17 @@ import (
 	"sync"
 	"time"
 
+	mmModel "github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin"
+
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/config"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
-	mmModel "github.com/mattermost/mattermost/server/public/model"
-	"github.com/mattermost/mattermost/server/public/plugin"
 )
 
 // MattermostUser represents a Mattermost user that implements the BridgeUser interface
+//
+//nolint:revive // MattermostUser is clearer than User in this context
 type MattermostUser struct {
 	// User identity
 	id          string
@@ -40,7 +43,7 @@ type MattermostUser struct {
 }
 
 // NewMattermostUser creates a new Mattermost user
-func NewMattermostUser(id, displayName, username, email string, api plugin.API, cfg *config.Configuration, logger logger.Logger) *MattermostUser {
+func NewMattermostUser(id, displayName, username, email string, api plugin.API, cfg *config.Configuration, log logger.Logger) *MattermostUser {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &MattermostUser{
@@ -53,7 +56,7 @@ func NewMattermostUser(id, displayName, username, email string, api plugin.API, 
 		config:      cfg,
 		ctx:         ctx,
 		cancel:      cancel,
-		logger:      logger,
+		logger:      log,
 	}
 }
 
@@ -69,7 +72,7 @@ func (u *MattermostUser) Validate() error {
 		return fmt.Errorf("configuration cannot be nil")
 	}
 	if u.api == nil {
-		return fmt.Errorf("Mattermost API cannot be nil")
+		return fmt.Errorf("mattermost API cannot be nil")
 	}
 	return nil
 }
@@ -192,13 +195,13 @@ func (u *MattermostUser) IsConnected() bool {
 
 func (u *MattermostUser) Ping() error {
 	if u.api == nil {
-		return fmt.Errorf("Mattermost API not initialized for user %s", u.id)
+		return fmt.Errorf("mattermost API not initialized for user %s", u.id)
 	}
 
 	// Test API connectivity by getting server version
 	version := u.api.GetServerVersion()
 	if version == "" {
-		return fmt.Errorf("Mattermost API ping returned empty server version for user %s", u.id)
+		return fmt.Errorf("mattermost API ping returned empty server version for user %s", u.id)
 	}
 
 	return nil
@@ -207,7 +210,7 @@ func (u *MattermostUser) Ping() error {
 // CheckChannelExists checks if a Mattermost channel exists
 func (u *MattermostUser) CheckChannelExists(channelID string) (bool, error) {
 	if u.api == nil {
-		return false, fmt.Errorf("Mattermost API not initialized for user %s", u.id)
+		return false, fmt.Errorf("mattermost API not initialized for user %s", u.id)
 	}
 
 	// Try to get the channel by ID

@@ -35,7 +35,7 @@ type messageBus struct {
 }
 
 // NewMessageBus creates a new message bus instance
-func NewMessageBus(logger logger.Logger) model.MessageBus {
+func NewMessageBus(log logger.Logger) model.MessageBus {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &messageBus{
@@ -43,7 +43,7 @@ func NewMessageBus(logger logger.Logger) model.MessageBus {
 		subscribers:      make(map[string]chan *model.DirectionalMessage),
 		ctx:              ctx,
 		cancel:           cancel,
-		logger:           logger,
+		logger:           log,
 	}
 }
 

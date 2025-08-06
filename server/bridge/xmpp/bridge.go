@@ -9,15 +9,16 @@ import (
 
 	"fmt"
 
+	"github.com/mattermost/mattermost/server/public/plugin"
+	"mellium.im/xmlstream"
+	"mellium.im/xmpp/stanza"
+
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/bridge"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/config"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
 	pluginModel "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/model"
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/store/kvstore"
 	xmppClient "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/xmpp"
-	"github.com/mattermost/mattermost/server/public/plugin"
-	"mellium.im/xmlstream"
-	"mellium.im/xmpp/stanza"
 )
 
 const (
@@ -55,12 +56,12 @@ type xmppBridge struct {
 }
 
 // NewBridge creates a new XMPP bridge
-func NewBridge(log logger.Logger, api plugin.API, kvstore kvstore.KVStore, cfg *config.Configuration, bridgeID, remoteID string) pluginModel.Bridge {
+func NewBridge(log logger.Logger, api plugin.API, store kvstore.KVStore, cfg *config.Configuration, bridgeID, remoteID string) pluginModel.Bridge {
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &xmppBridge{
 		logger:           log,
 		api:              api,
-		kvstore:          kvstore,
+		kvstore:          store,
 		ctx:              ctx,
 		cancel:           cancel,
 		channelMappings:  make(map[string]string),
@@ -87,7 +88,7 @@ func NewBridge(log logger.Logger, api plugin.API, kvstore kvstore.KVStore, cfg *
 func (b *xmppBridge) createXMPPClient(cfg *config.Configuration) *xmppClient.Client {
 	// Create TLS config based on certificate verification setting
 	tlsConfig := &tls.Config{
-		InsecureSkipVerify: cfg.XMPPInsecureSkipVerify,
+		InsecureSkipVerify: cfg.XMPPInsecureSkipVerify, //nolint:gosec // Allow insecure TLS for testing environments
 	}
 
 	return xmppClient.NewClientWithTLS(
@@ -154,19 +155,19 @@ func (b *xmppBridge) Start() error {
 	b.logger.LogDebug("Starting Mattermost to XMPP bridge")
 
 	b.configMu.RLock()
-	config := b.config
+	cfg := b.config
 	b.configMu.RUnlock()
 
-	if config == nil {
+	if cfg == nil {
 		return fmt.Errorf("bridge configuration not set")
 	}
 
-	if !config.EnableSync {
+	if !cfg.EnableSync {
 		b.logger.LogInfo("XMPP sync is disabled, bridge will not start")
 		return nil
 	}
 
-	b.logger.LogInfo("Starting Mattermost to XMPP bridge", "xmpp_server", config.XMPPServerURL, "username", config.XMPPUsername)
+	b.logger.LogInfo("Starting Mattermost to XMPP bridge", "xmpp_server", cfg.XMPPServerURL, "username", cfg.XMPPUsername)
 
 	// Connect to XMPP server
 	if err := b.connectToXMPP(); err != nil {
@@ -340,10 +341,10 @@ func (b *xmppBridge) connectionMonitor() {
 // handleReconnection attempts to reconnect to XMPP and rejoin rooms
 func (b *xmppBridge) handleReconnection() {
 	b.configMu.RLock()
-	config := b.config
+	cfg := b.config
 	b.configMu.RUnlock()
 
-	if config == nil || !config.EnableSync {
+	if cfg == nil || !cfg.EnableSync {
 		return
 	}
 
@@ -357,7 +358,7 @@ func (b *xmppBridge) handleReconnection() {
 	// Retry connection with exponential backoff
 	maxRetries := 3
 	for i := range maxRetries {
-		backoff := time.Duration(1<<uint(i)) * time.Second
+		backoff := time.Duration(1<<i) * time.Second
 
 		select {
 		case <-b.ctx.Done():
@@ -604,6 +605,8 @@ func (b *xmppBridge) ID() string {
 }
 
 // handleIncomingXMPPMessage handles incoming XMPP messages and converts them to bridge messages
+//
+//nolint:gocritic // msg parameter must match external XMPP library handler signature
 func (b *xmppBridge) handleIncomingXMPPMessage(msg stanza.Message, t xmlstream.TokenReadEncoder) error {
 	b.logger.LogDebug("XMPP bridge handling incoming message",
 		"from", msg.From.String(),

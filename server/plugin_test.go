@@ -10,20 +10,20 @@ import (
 )
 
 func TestServeHTTP(t *testing.T) {
-	assert := assert.New(t)
+	a := assert.New(t)
 	plugin := Plugin{}
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/hello", nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/hello", http.NoBody)
 	r.Header.Set("Mattermost-User-ID", "test-user-id")
 
 	plugin.ServeHTTP(nil, w, r)
 
 	result := w.Result()
-	assert.NotNil(result)
+	a.NotNil(result)
 	defer result.Body.Close()
 	bodyBytes, err := io.ReadAll(result.Body)
-	assert.Nil(err)
+	a.Nil(err)
 	bodyString := string(bodyBytes)
 
-	assert.Equal("Hello, world!", bodyString)
+	a.Equal("Hello, world!", bodyString)
 }

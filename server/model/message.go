@@ -15,11 +15,11 @@ const (
 // BridgeMessage represents a message that can be passed between any bridge types
 type BridgeMessage struct {
 	// Source information
-	SourceBridge     string // "xmpp", "mattermost", "slack", etc.
-	SourceChannelID  string // Channel ID in source system
-	SourceUserID     string // User ID in source system (JID, user ID, etc.)
-	SourceUserName   string // Display name in source system
-	SourceRemoteID   string // Remote ID of the bridge instance that created this message
+	SourceBridge    string // "xmpp", "mattermost", "slack", etc.
+	SourceChannelID string // Channel ID in source system
+	SourceUserID    string // User ID in source system (JID, user ID, etc.)
+	SourceUserName  string // Display name in source system
+	SourceRemoteID  string // Remote ID of the bridge instance that created this message
 
 	// Message content (standardized on Markdown)
 	Content     string // Markdown formatted message content

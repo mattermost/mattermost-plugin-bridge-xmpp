@@ -21,11 +21,11 @@ type UserManager struct {
 }
 
 // NewUserManager creates a new user manager for a specific bridge type
-func NewUserManager(bridgeType string, logger logger.Logger) model.BridgeUserManager {
+func NewUserManager(bridgeType string, log logger.Logger) model.BridgeUserManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &UserManager{
 		bridgeType: bridgeType,
-		logger:     logger,
+		logger:     log,
 		users:      make(map[string]model.BridgeUser),
 		ctx:        ctx,
 		cancel:     cancel,

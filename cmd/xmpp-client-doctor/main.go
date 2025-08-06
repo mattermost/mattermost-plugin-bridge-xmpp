@@ -124,7 +124,7 @@ func testXMPPClient(config *Config) error {
 			log.Printf("Using insecure TLS configuration (skipping certificate verification)")
 		}
 		tlsConfig := &tls.Config{
-			InsecureSkipVerify: true,
+			InsecureSkipVerify: true, //nolint:gosec // This is a testing tool for development environments
 		}
 		client = xmpp.NewClientWithTLS(
 			config.Server,
@@ -302,7 +302,7 @@ func testMUCOperations(client *xmpp.Client, config *Config) error {
 	}
 
 	start = time.Now()
-	_, err = client.SendMessage(messageReq)
+	_, err = client.SendMessage(&messageReq)
 	if err != nil {
 		return fmt.Errorf("failed to send test message to room %s: %w", config.TestRoom, err)
 	}

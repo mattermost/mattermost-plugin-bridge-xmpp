@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/jellydator/ttlcache/v3"
-	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
 	"mellium.im/sasl"
 	"mellium.im/xmlstream"
 	"mellium.im/xmpp"
@@ -20,6 +19,8 @@ import (
 	"mellium.im/xmpp/muc"
 	"mellium.im/xmpp/mux"
 	"mellium.im/xmpp/stanza"
+
+	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/logger"
 )
 
 const (
@@ -52,7 +53,7 @@ type Client struct {
 	sessionServing bool
 
 	// Message handling for bridge integration
-	messageHandler   mux.MessageHandlerFunc // Bridge handler for incoming messages
+	messageHandler mux.MessageHandlerFunc // Bridge handler for incoming messages
 
 	// Message deduplication cache to handle XMPP server duplicates
 	dedupeCache *ttlcache.Cache[string, time.Time]
@@ -80,6 +81,8 @@ type MessageBody struct {
 }
 
 // XMPPMessage represents a complete XMPP message stanza
+//
+//nolint:revive // XMPPMessage is clearer than Message in this context
 type XMPPMessage struct {
 	XMLName xml.Name    `xml:"jabber:client message"`
 	Type    string      `xml:"type,attr"`
@@ -91,7 +94,7 @@ type XMPPMessage struct {
 // MessageWithBody represents a message stanza with body for parsing
 type MessageWithBody struct {
 	stanza.Message
-	Body    string   `xml:"body"`
+	Body string `xml:"body"`
 }
 
 // GhostUser represents an XMPP ghost user
@@ -107,7 +110,7 @@ type UserProfile struct {
 }
 
 // NewClient creates a new XMPP client.
-func NewClient(serverURL, username, password, resource, remoteID string, logger logger.Logger) *Client {
+func NewClient(serverURL, username, password, resource, remoteID string, log logger.Logger) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create TTL cache for message deduplication
@@ -119,16 +122,16 @@ func NewClient(serverURL, username, password, resource, remoteID string, logger 
 	go dedupeCache.Start()
 
 	client := &Client{
-		serverURL:        serverURL,
-		username:         username,
-		password:         password,
-		resource:         resource,
-		remoteID:         remoteID,
-		logger:           logger,
-		ctx:              ctx,
-		cancel:           cancel,
-		sessionReady:     make(chan struct{}),
-		dedupeCache:      dedupeCache,
+		serverURL:    serverURL,
+		username:     username,
+		password:     password,
+		resource:     resource,
+		remoteID:     remoteID,
+		logger:       log,
+		ctx:          ctx,
+		cancel:       cancel,
+		sessionReady: make(chan struct{}),
+		dedupeCache:  dedupeCache,
 	}
 
 	// Create MUC client and set up message handling
@@ -136,17 +139,17 @@ func NewClient(serverURL, username, password, resource, remoteID string, logger 
 	client.mucClient = mucClient
 
 	// Create mux with MUC client and our message handler
-	mux := mux.New("jabber:client",
+	messageMux := mux.New("jabber:client",
 		muc.HandleClient(mucClient),
 		mux.MessageFunc(stanza.GroupChatMessage, xml.Name{}, client.handleIncomingMessage))
-	client.mux = mux
+	client.mux = messageMux
 
 	return client
 }
 
 // NewClientWithTLS creates a new XMPP client with custom TLS configuration.
-func NewClientWithTLS(serverURL, username, password, resource, remoteID string, tlsConfig *tls.Config, logger logger.Logger) *Client {
-	client := NewClient(serverURL, username, password, resource, remoteID, logger)
+func NewClientWithTLS(serverURL, username, password, resource, remoteID string, tlsConfig *tls.Config, log logger.Logger) *Client {
+	client := NewClient(serverURL, username, password, resource, remoteID, log)
 	client.tlsConfig = tlsConfig
 	return client
 }
@@ -234,7 +237,7 @@ func (c *Client) Connect() error {
 	if c.tlsConfig != nil {
 		tlsConfig = c.tlsConfig
 	} else {
-		tlsConfig = &tls.Config{
+		tlsConfig = &tls.Config{ //nolint:gosec // Default TLS config without MinVersion for XMPP compatibility
 			ServerName: c.jidAddr.Domain().String(),
 		}
 	}
@@ -372,15 +375,15 @@ func (c *Client) ExtractChannelID(from jid.JID) (string, error) {
 }
 
 // ExtractUserInfo extracts user ID and display name from a message JID
-func (c *Client) ExtractUserInfo(from jid.JID) (string, string) {
+func (c *Client) ExtractUserInfo(from jid.JID) (userID, displayName string) {
 	// For MUC messages, the resource part is the nickname
 	nickname := from.Resourcepart()
 
 	// Use the full JID as user ID for XMPP
-	userID := from.String()
+	userID = from.String()
 
 	// Use nickname as display name if available, otherwise use full JID
-	displayName := nickname
+	displayName = nickname
 	if displayName == "" {
 		displayName = from.String()
 	}
@@ -486,7 +489,7 @@ func (c *Client) LeaveRoom(roomJID string) error {
 }
 
 // SendMessage sends a message to an XMPP room
-func (c *Client) SendMessage(req MessageRequest) (*SendMessageResponse, error) {
+func (c *Client) SendMessage(req *MessageRequest) (*SendMessageResponse, error) {
 	if c.session == nil {
 		if err := c.Connect(); err != nil {
 			return nil, err
@@ -736,8 +739,9 @@ func (c *Client) Ping() error {
 	return nil
 }
 
-
 // handleIncomingMessage processes incoming XMPP message stanzas
+//
+//nolint:gocritic // msg parameter must match external XMPP library handler signature
 func (c *Client) handleIncomingMessage(msg stanza.Message, t xmlstream.TokenReadEncoder) error {
 	c.logger.LogDebug("Received XMPP message",
 		"from", msg.From.String(),
@@ -770,4 +774,3 @@ func (c *Client) handleIncomingMessage(msg stanza.Message, t xmlstream.TokenRead
 	c.logger.LogDebug("No message handler set, ignoring message")
 	return nil
 }
-
