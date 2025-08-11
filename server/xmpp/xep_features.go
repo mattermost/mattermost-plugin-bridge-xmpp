@@ -26,9 +26,9 @@ type XEPFeatures struct {
 }
 
 // NewXEPFeatures creates a new XEP features manager
-func NewXEPFeatures(logger logger.Logger) *XEPFeatures {
+func NewXEPFeatures(log logger.Logger) *XEPFeatures {
 	return &XEPFeatures{
-		logger: logger,
+		logger: log,
 	}
 }
 

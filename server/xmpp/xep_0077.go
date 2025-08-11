@@ -73,10 +73,10 @@ type RegistrationResponse struct {
 }
 
 // NewInBandRegistration creates a new InBandRegistration XEP handler
-func NewInBandRegistration(client *Client, logger logger.Logger) *InBandRegistration {
+func NewInBandRegistration(client *Client, log logger.Logger) *InBandRegistration {
 	return &InBandRegistration{
 		client:  client,
-		logger:  logger,
+		logger:  log,
 		enabled: true, // Default enabled
 	}
 }

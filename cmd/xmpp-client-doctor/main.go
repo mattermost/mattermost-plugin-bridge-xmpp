@@ -484,7 +484,7 @@ func testXEP0077(client *xmpp.Client, config *Config) error {
 	// This is handled asynchronously in the client Connect method
 	time.Sleep(2 * time.Second)
 
-	// Check if server supports XEP-0077 
+	// Check if server supports XEP-0077
 	inBandReg, err := client.GetInBandRegistration()
 	if err != nil {
 		return fmt.Errorf("server does not support XEP-0077 In-Band Registration: %w", err)
@@ -499,7 +499,7 @@ func testXEP0077(client *xmpp.Client, config *Config) error {
 	}
 
 	serverJID := client.GetJID().Domain()
-	
+
 	// Step 1: Test registration fields discovery
 	start := time.Now()
 	if config.Verbose {
