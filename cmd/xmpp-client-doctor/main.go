@@ -4,9 +4,11 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
+
+	"github.com/lmittmann/tint"
 
 	"github.com/mattermost/mattermost-plugin-bridge-xmpp/server/xmpp"
 )
@@ -14,8 +16,8 @@ import (
 const (
 	// Default values for development server (sidecar)
 	defaultServer   = "localhost:5222"
-	defaultUsername = "testuser@localhost"
-	defaultPassword = "testpass"
+	defaultUsername = "admin@localhost"
+	defaultPassword = "admin"
 	defaultResource = "doctor"
 	defaultTestRoom = "test1@conference.localhost"
 )
@@ -46,8 +48,8 @@ func main() {
 	flag.BoolVar(&config.TestMUC, "test-muc", true, "Enable MUC room testing (join/wait/leave)")
 	flag.BoolVar(&config.TestDirectMessage, "test-dm", true, "Enable direct message testing (send message to admin user)")
 	flag.BoolVar(&config.TestRoomExists, "test-room-exists", true, "Enable room existence testing using disco#info")
-	flag.BoolVar(&config.TestXEP0077, "test-xep0077", true, "Enable XEP-0077 In-Band Registration testing (required if enabled)")
-	flag.BoolVar(&config.Verbose, "verbose", true, "Enable verbose logging")
+	flag.BoolVar(&config.TestXEP0077, "test-xep0077", true, "Enable XEP-0077 In-Band Registration testing with ghost user message test")
+	flag.BoolVar(&config.Verbose, "verbose", false, "Enable verbose logging")
 	flag.BoolVar(&config.InsecureSkipVerify, "insecure-skip-verify", true, "Skip TLS certificate verification (for development)")
 
 	flag.Usage = func() {
@@ -71,66 +73,44 @@ func main() {
 
 	flag.Parse()
 
-	if config.Verbose {
-		log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-		log.Printf("Starting XMPP client doctor...")
-		log.Printf("Configuration:")
-		log.Printf("  Server: %s", config.Server)
-		log.Printf("  Username: %s", config.Username)
-		log.Printf("  Resource: %s", config.Resource)
-		log.Printf("  Password: %s", maskPassword(config.Password))
-		if config.TestMUC {
-			log.Printf("  Test Room: %s", config.TestRoom)
-		}
-		if config.TestDirectMessage {
-			log.Printf("  Test Direct Messages: enabled")
-		}
-		if config.TestRoomExists {
-			log.Printf("  Test Room Existence: enabled")
-		}
-		if config.TestXEP0077 {
-			log.Printf("  Test XEP-0077 In-Band Registration: enabled")
-		}
-	}
+	// Create the main logger
+	mainLogger := NewStructuredLogger(config.Verbose)
+
+	mainLogger.LogInfo("Starting XMPP client doctor")
+	mainLogger.LogInfo("Configuration",
+		"server", config.Server,
+		"username", config.Username,
+		"resource", config.Resource,
+		"password", maskPassword(config.Password),
+		"test_room", config.TestRoom,
+		"test_muc", config.TestMUC,
+		"test_direct_message", config.TestDirectMessage,
+		"test_room_exists", config.TestRoomExists,
+		"test_xep0077", config.TestXEP0077)
 
 	// Test the XMPP client
-	if err := testXMPPClient(config); err != nil {
-		log.Fatalf("❌ XMPP client test failed: %v", err)
+	if err := testXMPPClient(config, mainLogger); err != nil {
+		mainLogger.LogError("XMPP client test failed", "error", err)
+		os.Exit(1)
 	}
 
-	if config.Verbose {
-		log.Printf("✅ XMPP client test completed successfully!")
-	} else {
-		fmt.Println("✅ XMPP client connectivity test passed!")
-		if config.TestXEP0077 {
-			fmt.Println("✅ XMPP XEP-0077 In-Band Registration test passed!")
-		}
-		if config.TestMUC {
-			fmt.Println("✅ XMPP MUC operations test passed!")
-		}
-		if config.TestDirectMessage {
-			fmt.Println("✅ XMPP direct message test passed!")
-		}
-		if config.TestRoomExists {
-			fmt.Println("✅ XMPP room existence test passed!")
-		}
-	}
+	mainLogger.LogInfo("XMPP client test completed successfully",
+		"xep0077_test", config.TestXEP0077,
+		"muc_test", config.TestMUC,
+		"direct_message_test", config.TestDirectMessage,
+		"room_exists_test", config.TestRoomExists)
 }
 
-func testXMPPClient(config *Config) error {
-	if config.Verbose {
-		log.Printf("Creating XMPP client...")
-	}
+func testXMPPClient(config *Config, logger *StructuredLogger) error {
+	logger.LogDebug("Creating XMPP client")
 
-	// Create a simple logger for the XMPP client
-	doctorLogger := &SimpleLogger{verbose: config.Verbose}
+	// Create a structured logger for the XMPP client (reuse the passed logger)
+	doctorLogger := logger
 
 	// Create XMPP client with optional TLS configuration
 	var client *xmpp.Client
 	if config.InsecureSkipVerify {
-		if config.Verbose {
-			log.Printf("Using insecure TLS configuration (skipping certificate verification)")
-		}
+		logger.LogDebug("Using insecure TLS configuration", "skip_verify", true)
 		tlsConfig := &tls.Config{
 			InsecureSkipVerify: true, //nolint:gosec // This is a testing tool for development environments
 		}
@@ -154,9 +134,7 @@ func testXMPPClient(config *Config) error {
 		)
 	}
 
-	if config.Verbose {
-		log.Printf("Attempting to connect to XMPP server...")
-	}
+	logger.LogDebug("Attempting to connect to XMPP server", "server", config.Server)
 
 	// Test connection
 	start := time.Now()
@@ -166,10 +144,8 @@ func testXMPPClient(config *Config) error {
 	}
 	connectDuration := time.Since(start)
 
-	if config.Verbose {
-		log.Printf("✅ Connected to XMPP server in %v", connectDuration)
-		log.Printf("Testing connection health...")
-	}
+	logger.LogInfo("Connected to XMPP server", "duration", connectDuration)
+	logger.LogDebug("Testing connection health")
 
 	// Test connection health
 	start = time.Now()
@@ -179,9 +155,7 @@ func testXMPPClient(config *Config) error {
 	}
 	pingDuration := time.Since(start)
 
-	if config.Verbose {
-		log.Printf("✅ Connection health test passed in %v", pingDuration)
-	}
+	logger.LogInfo("Connection health test passed", "duration", pingDuration)
 
 	var xep0077Duration time.Duration
 	var mucDuration time.Duration
@@ -191,7 +165,7 @@ func testXMPPClient(config *Config) error {
 	// Test XEP-0077 In-Band Registration if requested
 	if config.TestXEP0077 {
 		start = time.Now()
-		err = testXEP0077(client, config)
+		err = testXEP0077(client, config, logger)
 		if err != nil {
 			return fmt.Errorf("XEP-0077 In-Band Registration test failed: %w", err)
 		}
@@ -201,7 +175,7 @@ func testXMPPClient(config *Config) error {
 	// Test MUC operations if requested
 	if config.TestMUC {
 		start = time.Now()
-		err = testMUCOperations(client, config)
+		err = testMUCOperations(client, config, logger)
 		if err != nil {
 			return fmt.Errorf("MUC operations test failed: %w", err)
 		}
@@ -211,7 +185,7 @@ func testXMPPClient(config *Config) error {
 	// Test direct message if requested
 	if config.TestDirectMessage {
 		start = time.Now()
-		err = testDirectMessage(client, config)
+		err = testDirectMessage(client, config, logger)
 		if err != nil {
 			return fmt.Errorf("direct message test failed: %w", err)
 		}
@@ -221,16 +195,14 @@ func testXMPPClient(config *Config) error {
 	// Test room existence if requested
 	if config.TestRoomExists {
 		start = time.Now()
-		err = testRoomExists(client, config)
+		err = testRoomExists(client, config, logger)
 		if err != nil {
 			return fmt.Errorf("room existence test failed: %w", err)
 		}
 		roomExistsDuration = time.Since(start)
 	}
 
-	if config.Verbose {
-		log.Printf("Disconnecting from XMPP server...")
-	}
+	logger.LogDebug("Disconnecting from XMPP server")
 
 	// Disconnect
 	start = time.Now()
@@ -240,48 +212,37 @@ func testXMPPClient(config *Config) error {
 	}
 	disconnectDuration := time.Since(start)
 
-	if config.Verbose {
-		log.Printf("✅ Disconnected from XMPP server in %v", disconnectDuration)
-		log.Printf("Connection summary:")
-		log.Printf("  Connect time: %v", connectDuration)
-		log.Printf("  Ping time: %v", pingDuration)
-		if config.TestXEP0077 {
-			log.Printf("  XEP-0077 test time: %v", xep0077Duration)
-		}
-		if config.TestMUC {
-			log.Printf("  MUC operations time: %v", mucDuration)
-		}
-		if config.TestDirectMessage {
-			log.Printf("  Direct message time: %v", dmDuration)
-		}
-		if config.TestRoomExists {
-			log.Printf("  Room existence check time: %v", roomExistsDuration)
-		}
-		log.Printf("  Disconnect time: %v", disconnectDuration)
-		totalTime := connectDuration + pingDuration + disconnectDuration
-		if config.TestXEP0077 {
-			totalTime += xep0077Duration
-		}
-		if config.TestMUC {
-			totalTime += mucDuration
-		}
-		if config.TestDirectMessage {
-			totalTime += dmDuration
-		}
-		if config.TestRoomExists {
-			totalTime += roomExistsDuration
-		}
-		log.Printf("  Total time: %v", totalTime)
+	totalTime := connectDuration + pingDuration + disconnectDuration
+	if config.TestXEP0077 {
+		totalTime += xep0077Duration
 	}
+	if config.TestMUC {
+		totalTime += mucDuration
+	}
+	if config.TestDirectMessage {
+		totalTime += dmDuration
+	}
+	if config.TestRoomExists {
+		totalTime += roomExistsDuration
+	}
+
+	logger.LogInfo("Disconnected from XMPP server", "disconnect_duration", disconnectDuration)
+	logger.LogInfo("Connection summary",
+		"connect_time", connectDuration,
+		"ping_time", pingDuration,
+		"xep0077_time", xep0077Duration,
+		"muc_time", mucDuration,
+		"direct_message_time", dmDuration,
+		"room_exists_time", roomExistsDuration,
+		"disconnect_time", disconnectDuration,
+		"total_time", totalTime)
 
 	return nil
 }
 
-func testMUCOperations(client *xmpp.Client, config *Config) error {
-	if config.Verbose {
-		log.Printf("Testing MUC operations with room: %s", config.TestRoom)
-		log.Printf("First checking if room exists...")
-	}
+func testMUCOperations(client *xmpp.Client, config *Config, logger *StructuredLogger) error {
+	logger.LogInfo("Testing MUC operations", "room", config.TestRoom)
+	logger.LogDebug("Checking if room exists first")
 
 	// Check if room exists before attempting to join
 	start := time.Now()
@@ -291,18 +252,13 @@ func testMUCOperations(client *xmpp.Client, config *Config) error {
 	}
 	checkDuration := time.Since(start)
 
-	if config.Verbose {
-		log.Printf("✅ Room existence check completed in %v", checkDuration)
-		log.Printf("Room %s exists: %t", config.TestRoom, exists)
-	}
+	logger.LogInfo("Room existence check completed", "duration", checkDuration, "room", config.TestRoom, "exists", exists)
 
 	if !exists {
 		return fmt.Errorf("cannot test MUC operations: room %s does not exist or is not accessible", config.TestRoom)
 	}
 
-	if config.Verbose {
-		log.Printf("Room exists, proceeding to join...")
-	}
+	logger.LogDebug("Room exists, proceeding to join")
 
 	// Test joining the room
 	start = time.Now()
@@ -314,10 +270,8 @@ func testMUCOperations(client *xmpp.Client, config *Config) error {
 
 	var sendDuration time.Duration
 
-	if config.Verbose {
-		log.Printf("✅ Successfully joined MUC room in %v", joinDuration)
-		log.Printf("Sending test message to room...")
-	}
+	logger.LogInfo("Successfully joined MUC room", "duration", joinDuration)
+	logger.LogDebug("Sending test message to room")
 
 	// Send a test message
 	testMessage := fmt.Sprintf("Test message from XMPP doctor at %s", time.Now().Format("15:04:05"))
@@ -333,18 +287,13 @@ func testMUCOperations(client *xmpp.Client, config *Config) error {
 	}
 	sendDuration = time.Since(start)
 
-	if config.Verbose {
-		log.Printf("✅ Successfully sent message in %v", sendDuration)
-		log.Printf("Message: %s", testMessage)
-		log.Printf("Waiting 5 seconds in the room...")
-	}
+	logger.LogInfo("Successfully sent message", "duration", sendDuration, "message", testMessage)
+	logger.LogDebug("Waiting 5 seconds in the room")
 
 	// Wait 5 seconds
 	time.Sleep(5 * time.Second)
 
-	if config.Verbose {
-		log.Printf("Attempting to leave MUC room...")
-	}
+	logger.LogDebug("Attempting to leave MUC room")
 
 	// Test leaving the room
 	start = time.Now()
@@ -354,25 +303,21 @@ func testMUCOperations(client *xmpp.Client, config *Config) error {
 	}
 	leaveDuration := time.Since(start)
 
-	if config.Verbose {
-		log.Printf("✅ Successfully left MUC room in %v", leaveDuration)
-		log.Printf("MUC operations summary:")
-		log.Printf("  Room existence check time: %v", checkDuration)
-		log.Printf("  Join time: %v", joinDuration)
-		log.Printf("  Send message time: %v", sendDuration)
-		log.Printf("  Wait time: 5s")
-		log.Printf("  Leave time: %v", leaveDuration)
-		log.Printf("  Total MUC time: %v", checkDuration+joinDuration+sendDuration+5*time.Second+leaveDuration)
-	}
+	logger.LogInfo("Successfully left MUC room", "duration", leaveDuration)
+	logger.LogInfo("MUC operations summary",
+		"room_check_time", checkDuration,
+		"join_time", joinDuration,
+		"send_time", sendDuration,
+		"wait_time", "5s",
+		"leave_time", leaveDuration,
+		"total_time", checkDuration+joinDuration+sendDuration+5*time.Second+leaveDuration)
 
 	return nil
 }
 
-func testDirectMessage(client *xmpp.Client, config *Config) error {
-	if config.Verbose {
-		log.Printf("Testing direct message functionality...")
-		log.Printf("Sending test message to admin user...")
-	}
+func testDirectMessage(client *xmpp.Client, config *Config, logger *StructuredLogger) error {
+	logger.LogInfo("Testing direct message functionality")
+	logger.LogDebug("Sending test message to admin user")
 
 	// Send a test message to the admin user
 	testMessage := fmt.Sprintf("Test direct message from XMPP doctor at %s", time.Now().Format("15:04:05"))
@@ -385,22 +330,18 @@ func testDirectMessage(client *xmpp.Client, config *Config) error {
 	}
 	sendDuration := time.Since(start)
 
-	if config.Verbose {
-		log.Printf("✅ Successfully sent direct message in %v", sendDuration)
-		log.Printf("Message: %s", testMessage)
-		log.Printf("Recipient: %s", adminJID)
-		log.Printf("Direct message test summary:")
-		log.Printf("  Send message time: %v", sendDuration)
-	}
+	logger.LogInfo("Successfully sent direct message",
+		"duration", sendDuration,
+		"message", testMessage,
+		"recipient", adminJID)
+	logger.LogInfo("Direct message test summary", "send_time", sendDuration)
 
 	return nil
 }
 
-func testRoomExists(client *xmpp.Client, config *Config) error {
-	if config.Verbose {
-		log.Printf("Testing room existence functionality...")
-		log.Printf("Checking if test room exists: %s", config.TestRoom)
-	}
+func testRoomExists(client *xmpp.Client, config *Config, logger *StructuredLogger) error {
+	logger.LogInfo("Testing room existence functionality")
+	logger.LogDebug("Checking if test room exists", "room", config.TestRoom)
 
 	// Test room existence check
 	start := time.Now()
@@ -410,16 +351,11 @@ func testRoomExists(client *xmpp.Client, config *Config) error {
 	}
 	checkDuration := time.Since(start)
 
-	if config.Verbose {
-		log.Printf("✅ Room existence check completed in %v", checkDuration)
-		log.Printf("Room %s exists: %t", config.TestRoom, exists)
-	}
+	logger.LogInfo("Room existence check completed", "duration", checkDuration, "room", config.TestRoom, "exists", exists)
 
 	// Test with a non-existent room to verify negative case
 	nonExistentRoom := "nonexistent-room-12345@conference.localhost"
-	if config.Verbose {
-		log.Printf("Testing negative case with non-existent room: %s", nonExistentRoom)
-	}
+	logger.LogDebug("Testing negative case with non-existent room", "room", nonExistentRoom)
 
 	start = time.Now()
 	existsNegative, err := client.CheckRoomExists(nonExistentRoom)
@@ -428,14 +364,15 @@ func testRoomExists(client *xmpp.Client, config *Config) error {
 	}
 	checkNegativeDuration := time.Since(start)
 
-	if config.Verbose {
-		log.Printf("✅ Negative room existence check completed in %v", checkNegativeDuration)
-		log.Printf("Non-existent room %s exists: %t (should be false)", nonExistentRoom, existsNegative)
-		log.Printf("Room existence test summary:")
-		log.Printf("  Test room check time: %v", checkDuration)
-		log.Printf("  Negative case check time: %v", checkNegativeDuration)
-		log.Printf("  Total room existence test time: %v", checkDuration+checkNegativeDuration)
-	}
+	logger.LogInfo("Negative room existence check completed",
+		"duration", checkNegativeDuration,
+		"room", nonExistentRoom,
+		"exists", existsNegative,
+		"expected_false", true)
+	logger.LogInfo("Room existence test summary",
+		"test_room_time", checkDuration,
+		"negative_case_time", checkNegativeDuration,
+		"total_time", checkDuration+checkNegativeDuration)
 
 	return nil
 }
@@ -447,44 +384,60 @@ func maskPassword(password string) string {
 	return password[:2] + "****"
 }
 
-// SimpleLogger provides basic logging functionality for the doctor command
-type SimpleLogger struct {
+// StructuredLogger provides structured logging functionality for the doctor command using slog
+type StructuredLogger struct {
+	logger  *slog.Logger
 	verbose bool
 }
 
-// LogDebug logs debug messages if verbose mode is enabled
-func (l *SimpleLogger) LogDebug(msg string, args ...interface{}) {
-	if l.verbose {
-		log.Printf("[DEBUG] "+msg, args...)
+// NewStructuredLogger creates a new structured logger with colorized output
+func NewStructuredLogger(verbose bool) *StructuredLogger {
+	// Configure log level based on verbose flag
+	level := slog.LevelInfo
+	if verbose {
+		level = slog.LevelDebug
+	}
+
+	// Create tinted handler for colorized output
+	handler := tint.NewHandler(os.Stdout, &tint.Options{
+		Level:      level,
+		TimeFormat: "15:04:05.000", // More concise time format
+		AddSource:  false,          // Don't show source file info
+	})
+
+	// Create logger with the handler
+	logger := slog.New(handler)
+
+	return &StructuredLogger{
+		logger:  logger,
+		verbose: verbose,
 	}
 }
 
-// LogInfo logs info messages
-func (l *SimpleLogger) LogInfo(msg string, args ...interface{}) {
-	log.Printf("[INFO] "+msg, args...)
+// LogDebug logs debug messages with structured key-value pairs
+func (l *StructuredLogger) LogDebug(msg string, keyValuePairs ...any) {
+	l.logger.Debug(msg, keyValuePairs...)
 }
 
-// LogWarn logs warning messages
-func (l *SimpleLogger) LogWarn(msg string, args ...interface{}) {
-	log.Printf("[WARN] "+msg, args...)
+// LogInfo logs info messages with structured key-value pairs
+func (l *StructuredLogger) LogInfo(msg string, keyValuePairs ...any) {
+	l.logger.Info(msg, keyValuePairs...)
 }
 
-// LogError logs error messages
-func (l *SimpleLogger) LogError(msg string, args ...interface{}) {
-	log.Printf("[ERROR] "+msg, args...)
+// LogWarn logs warning messages with structured key-value pairs
+func (l *StructuredLogger) LogWarn(msg string, keyValuePairs ...any) {
+	l.logger.Warn(msg, keyValuePairs...)
 }
 
-// testXEP0077 tests XEP-0077 In-Band Registration functionality by creating and deleting a test user
-func testXEP0077(client *xmpp.Client, config *Config) error {
-	if config.Verbose {
-		log.Printf("Testing XEP-0077 In-Band Registration functionality...")
-	}
+// LogError logs error messages with structured key-value pairs
+func (l *StructuredLogger) LogError(msg string, keyValuePairs ...any) {
+	l.logger.Error(msg, keyValuePairs...)
+}
 
-	// First, wait for server capability detection to complete
-	// This is handled asynchronously in the client Connect method
-	time.Sleep(2 * time.Second)
+// testXEP0077 tests XEP-0077 In-Band Registration by creating a ghost user and testing message sending
+func testXEP0077(client *xmpp.Client, config *Config, logger *StructuredLogger) error {
+	logger.LogInfo("Testing XEP-0077 In-Band Registration with ghost user messaging")
 
-	// Check if server supports XEP-0077
 	inBandReg, err := client.GetInBandRegistration()
 	if err != nil {
 		return fmt.Errorf("server does not support XEP-0077 In-Band Registration: %w", err)
@@ -494,99 +447,95 @@ func testXEP0077(client *xmpp.Client, config *Config) error {
 		return fmt.Errorf("XEP-0077 In-Band Registration is not enabled on this server")
 	}
 
-	if config.Verbose {
-		log.Printf("✅ Server supports XEP-0077 In-Band Registration")
-	}
-
 	serverJID := client.GetJID().Domain()
 
-	// Step 1: Test registration fields discovery
-	start := time.Now()
-	if config.Verbose {
-		log.Printf("Testing registration fields discovery for server: %s", serverJID.String())
+	// Step 1: Create ghost user with admin client
+	ghostUsername := fmt.Sprintf("ghost_test_%d", time.Now().Unix())
+	ghostPassword := "testpass123"
+	ghostJID := fmt.Sprintf("%s@%s", ghostUsername, serverJID.String())
+
+	logger.LogInfo("Creating ghost user", "username", ghostUsername)
+
+	ghostRegistrationRequest := &xmpp.RegistrationRequest{
+		Username: ghostUsername,
+		Password: ghostPassword,
+		Email:    fmt.Sprintf("%s@localhost", ghostUsername),
 	}
 
-	fields, err := inBandReg.GetRegistrationFields(serverJID)
+	ghostRegResponse, err := inBandReg.RegisterAccount(serverJID, ghostRegistrationRequest)
 	if err != nil {
-		return fmt.Errorf("failed to get registration fields from server: %w", err)
+		return fmt.Errorf("failed to register ghost user: %w", err)
 	}
-	fieldsDuration := time.Since(start)
-
-	if config.Verbose {
-		log.Printf("✅ Registration fields discovery completed in %v", fieldsDuration)
-		log.Printf("Registration fields: required=%v, available=%d", fields.Required, len(fields.Fields))
+	if !ghostRegResponse.Success {
+		return fmt.Errorf("ghost user registration failed: %s", ghostRegResponse.Error)
 	}
 
-	// Step 2: Create test user
-	testUsername := fmt.Sprintf("xmpptest%d", time.Now().Unix())
-	testPassword := "testpass123"
-	testEmail := fmt.Sprintf("%s@localhost", testUsername)
+	logger.LogInfo("Ghost user created successfully", "username", ghostUsername)
 
-	if config.Verbose {
-		log.Printf("Creating test user: %s", testUsername)
-	}
-
-	registrationRequest := &xmpp.RegistrationRequest{
-		Username: testUsername,
-		Password: testPassword,
-		Email:    testEmail,
-	}
-
-	start = time.Now()
-	regResponse, err := inBandReg.RegisterAccount(serverJID, registrationRequest)
-	if err != nil {
-		return fmt.Errorf("failed to register test user '%s': %w", testUsername, err)
-	}
-	registerDuration := time.Since(start)
-
-	if !regResponse.Success {
-		return fmt.Errorf("user registration failed: %s", regResponse.Error)
-	}
-
-	if config.Verbose {
-		log.Printf("✅ Test user '%s' registered successfully in %v", testUsername, registerDuration)
-		log.Printf("Registration response: %s", regResponse.Message)
-	}
-
-	// Step 3: Delete test user (cleanup)
-	if config.Verbose {
-		log.Printf("Cleaning up: removing test user '%s'", testUsername)
-	}
-
-	start = time.Now()
-	cancelResponse, err := inBandReg.CancelRegistration(serverJID)
-	if err != nil {
-		if config.Verbose {
-			log.Printf("⚠️  Failed to remove test user '%s': %v", testUsername, err)
-			log.Printf("⚠️  Manual cleanup may be required")
-		}
+	// Step 2-7: Use ghost client for all operations
+	var ghostClient *xmpp.Client
+	if config.InsecureSkipVerify {
+		tlsConfig := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // Testing tool
+		ghostClient = xmpp.NewClientWithTLS(config.Server, ghostJID, ghostPassword, "ghost_doctor", "ghost-remote-id", tlsConfig, logger)
 	} else {
-		cancelDuration := time.Since(start)
-		if cancelResponse.Success {
-			if config.Verbose {
-				log.Printf("✅ Test user '%s' removed successfully in %v", testUsername, cancelDuration)
-			}
-		} else {
-			if config.Verbose {
-				log.Printf("⚠️  User removal may have failed: %s", cancelResponse.Error)
-			}
-		}
+		ghostClient = xmpp.NewClient(config.Server, ghostJID, ghostPassword, "ghost_doctor", "ghost-remote-id", logger)
 	}
 
-	if config.Verbose {
-		log.Printf("XEP-0077 test summary:")
-		log.Printf("  Server support check: ✅")
-		log.Printf("  Registration fields discovery time: %v", fieldsDuration)
-		log.Printf("  User registration time: %v", registerDuration)
-		log.Printf("  Test username: %s", testUsername)
-		log.Printf("  Required fields count: %d", len(fields.Required))
-		log.Printf("  User creation: ✅")
-		if err == nil && cancelResponse.Success {
-			log.Printf("  User cleanup: ✅")
-		} else {
-			log.Printf("  User cleanup: ⚠️")
-		}
+	// Step 2: Connect ghost client
+	if err := ghostClient.Connect(); err != nil {
+		return fmt.Errorf("failed to connect ghost user: %w", err)
+	}
+	logger.LogInfo("Ghost user connected")
+
+	// Step 3: Check test room exists
+	exists, err := ghostClient.CheckRoomExists(config.TestRoom)
+	if err != nil {
+		return fmt.Errorf("failed to check room existence: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("test room %s does not exist", config.TestRoom)
 	}
 
+	// Step 4: Join test room
+	if err := ghostClient.JoinRoom(config.TestRoom); err != nil {
+		return fmt.Errorf("failed to join room: %w", err)
+	}
+	logger.LogInfo("Ghost user joined room", "room", config.TestRoom)
+
+	// Step 5: Send message to test room
+	testMessage := fmt.Sprintf("Test ghost user message from %s at %s", ghostUsername, time.Now().Format("15:04:05"))
+	messageReq := xmpp.MessageRequest{
+		RoomJID:      config.TestRoom,
+		GhostUserJID: ghostJID,
+		Message:      testMessage,
+	}
+
+	if _, err := ghostClient.SendMessage(&messageReq); err != nil {
+		return fmt.Errorf("failed to send message: %w", err)
+	}
+	logger.LogInfo("Ghost user sent message", "message", testMessage)
+
+	// Step 6: Cancel account (ghost user cancels their own registration)
+	ghostInBandReg, err := ghostClient.GetInBandRegistration()
+	if err != nil {
+		return fmt.Errorf("failed to get XEP-0077 handler for ghost user: %w", err)
+	}
+
+	ghostCancellationRequest := &xmpp.CancellationRequest{Username: ghostUsername}
+	ghostCancelResponse, err := ghostInBandReg.CancelRegistration(serverJID, ghostCancellationRequest)
+	if err != nil {
+		return fmt.Errorf("failed to cancel ghost user registration: %w", err)
+	}
+	if !ghostCancelResponse.Success {
+		return fmt.Errorf("ghost user registration cancellation failed: %s", ghostCancelResponse.Error)
+	}
+	logger.LogInfo("Ghost user registration cancelled successfully")
+
+	// Clean disconnect
+	if err := ghostClient.Disconnect(); err != nil {
+		logger.LogWarn("Failed to disconnect ghost client", "error", err)
+	}
+
+	logger.LogInfo("XEP-0077 ghost user test completed successfully", "username", ghostUsername)
 	return nil
 }
