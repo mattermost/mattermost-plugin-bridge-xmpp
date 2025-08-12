@@ -14,43 +14,7 @@ services:
       - "7777:7777" # File transfer proxy
     volumes:
       - openfire_data:/var/lib/openfire
-    depends_on:
-      - postgres
-    networks:
-      - openfire-network
-
-  postgres:
-    image: postgres:15
-    container_name: openfire-postgres
-    restart: unless-stopped
-    environment:
-      - POSTGRES_DB=openfire
-      - POSTGRES_USER=openfire
-      - POSTGRES_PASSWORD=openfire123
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    # ports:
-    #   - "5432:5432" # Exposed for development access
-    networks:
-      - openfire-network
-
-  adminer:
-    image: adminer:latest
-    container_name: openfire-adminer
-    restart: unless-stopped
-    # ports:
-    #   - "8080:8080" # Database management interface
-    depends_on:
-      - postgres
-    networks:
-      - openfire-network
 
 volumes:
   openfire_data:
     driver: local
-  postgres_data:
-    driver: local
-
-networks:
-  openfire-network:
-    driver: bridge
