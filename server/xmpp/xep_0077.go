@@ -235,18 +235,20 @@ func (r *InBandRegistration) RegisterAccount(serverJID jid.JID, request *Registr
 			Error:   fmt.Sprintf("failed to send registration request: %v", err),
 		}, nil
 	}
-	defer response.Close()
 
 	// Try to unmarshal the response as an error IQ first
 	responseIQ, err := stanza.UnmarshalIQError(response, xml.StartElement{})
 	registrationResponse := &InBandRegistrationResponse{}
+	response.Close()
 
 	if err != nil {
-		// If we can't unmarshal as error IQ, check if it's a success response
-		// For now, assume success if no error occurred during sending
-		registrationResponse.Success = true
-		registrationResponse.Message = "Account registration completed successfully"
-		r.logger.LogDebug("Registration response could not be parsed as error IQ, assuming success", "server", serverJID.String(), "username", request.Username, "error", err)
+		// If we can't parse the response, treat it as a failure and log the parse error
+		registrationResponse.Success = false
+		registrationResponse.Error = "Failed to parse server response for registration request"
+		r.logger.LogWarn("Registration response could not be parsed, treating as failure",
+			"server", serverJID.String(),
+			"username", request.Username,
+			"parse_error", err.Error())
 	} else {
 		// Successfully unmarshaled - check IQ type
 		if responseIQ.Type == stanza.ErrorIQ {
@@ -370,18 +372,20 @@ func (r *InBandRegistration) CancelRegistration(serverJID jid.JID, request *Canc
 			Error:   fmt.Sprintf("failed to send registration cancellation request: %v", err),
 		}, nil
 	}
-	defer response.Close()
 
 	// Try to unmarshal the response as an error IQ first
 	responseIQ, err := stanza.UnmarshalIQError(response, xml.StartElement{})
 	cancellationResponse := &InBandRegistrationResponse{}
+	response.Close()
 
 	if err != nil {
-		// If we can't unmarshal as error IQ, check if it's a success response
-		// For now, assume success if no error occurred during sending
-		cancellationResponse.Success = true
-		cancellationResponse.Message = "Registration cancelled successfully"
-		r.logger.LogDebug("Cancellation response could not be parsed as error IQ, assuming success", "server", serverJID.String(), "username", request.Username, "error", err)
+		// If we can't parse the response, treat it as a failure and log the parse error
+		cancellationResponse.Success = false
+		cancellationResponse.Error = "Failed to parse server response for cancellation request"
+		r.logger.LogWarn("Cancellation response could not be parsed, treating as failure",
+			"server", serverJID.String(),
+			"username", request.Username,
+			"parse_error", err.Error())
 	} else {
 		// Successfully unmarshaled - check IQ type
 		if responseIQ.Type == stanza.ErrorIQ {
