@@ -396,7 +396,10 @@ func (m *UserManager) cleanupGhostUser(mattermostUserID string) error {
 	}
 
 	// Unregister the ghost user account via XEP-0077
-	response, err := regHandler.CancelRegistration(ghostJIDParsed.Domain())
+	cancellationRequest := &xmppClient.CancellationRequest{
+		Username: ghostJIDParsed.Localpart(), // Extract username from ghost JID
+	}
+	response, err := regHandler.CancelRegistration(ghostJIDParsed.Domain(), cancellationRequest)
 	if err != nil {
 		return fmt.Errorf("failed to cancel registration for ghost user %s: %w", ghostData.GhostJID, err)
 	}

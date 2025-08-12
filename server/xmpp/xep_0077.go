@@ -2,6 +2,7 @@
 package xmpp
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"fmt"
@@ -25,8 +26,8 @@ type InBandRegistration struct {
 	enabled bool
 }
 
-// RegistrationQuery represents the <query xmlns='jabber:iq:register'> element
-type RegistrationQuery struct {
+// InBandRegistrationQuery represents the <query xmlns='jabber:iq:register'> element
+type InBandRegistrationQuery struct {
 	XMLName      xml.Name  `xml:"jabber:iq:register query"`
 	Instructions string    `xml:"instructions,omitempty"`
 	Username     string    `xml:"username,omitempty"`
@@ -65,8 +66,13 @@ type RegistrationRequest struct {
 	AdditionalFields map[string]string `json:"additional_fields,omitempty"`
 }
 
-// RegistrationResponse represents the result of a registration operation
-type RegistrationResponse struct {
+// CancellationRequest represents a request to cancel/remove a user registration
+type CancellationRequest struct {
+	Username string `json:"username"`
+}
+
+// InBandRegistrationResponse represents the result of any XEP-0077 In-Band Registration operation
+type InBandRegistrationResponse struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error,omitempty"`
 	Message string `json:"message,omitempty"`
@@ -114,7 +120,7 @@ func (r *InBandRegistration) GetRegistrationFields(serverJID jid.JID) (*Registra
 		To:   serverJID,
 	}
 
-	query := RegistrationQuery{}
+	query := InBandRegistrationQuery{}
 
 	ctx, cancel := context.WithTimeout(r.client.ctx, 10*time.Second)
 	defer cancel()
@@ -138,7 +144,7 @@ func (r *InBandRegistration) GetRegistrationFields(serverJID jid.JID) (*Registra
 	// Create the IQ with query payload
 	iqWithQuery := struct {
 		stanza.IQ
-		Query RegistrationQuery `xml:"jabber:iq:register query"`
+		Query InBandRegistrationQuery `xml:"jabber:iq:register query"`
 	}{
 		IQ:    iq,
 		Query: query,
@@ -162,13 +168,13 @@ func (r *InBandRegistration) GetRegistrationFields(serverJID jid.JID) (*Registra
 }
 
 // RegisterAccount registers a new account with the server
-func (r *InBandRegistration) RegisterAccount(serverJID jid.JID, request *RegistrationRequest) (*RegistrationResponse, error) {
+func (r *InBandRegistration) RegisterAccount(serverJID jid.JID, request *RegistrationRequest) (*InBandRegistrationResponse, error) {
 	if r.client.session == nil {
 		return nil, fmt.Errorf("XMPP session not established")
 	}
 
 	if request.Username == "" || request.Password == "" {
-		return &RegistrationResponse{
+		return &InBandRegistrationResponse{
 			Success: false,
 			Error:   "username and password are required",
 		}, nil
@@ -180,7 +186,7 @@ func (r *InBandRegistration) RegisterAccount(serverJID jid.JID, request *Registr
 		To:   serverJID,
 	}
 
-	query := RegistrationQuery{
+	query := InBandRegistrationQuery{
 		Username: request.Username,
 		Password: request.Password,
 		Email:    request.Email,
@@ -207,57 +213,64 @@ func (r *InBandRegistration) RegisterAccount(serverJID jid.JID, request *Registr
 
 	r.logger.LogInfo("Registering new account", "server", serverJID.String(), "username", request.Username)
 
-	// Create response channels
-	responseChannel := make(chan *RegistrationResponse, 1)
-
-	// Store response handler temporarily
-	go func() {
-		// This is a simplified approach - in practice you'd want proper IQ response handling
-		response := &RegistrationResponse{
-			Success: true,
-			Message: "Account registered successfully",
-		}
-		responseChannel <- response
-	}()
-
-	// Create the IQ with query payload
-	iqWithQuery := struct {
-		stanza.IQ
-		Query RegistrationQuery `xml:"jabber:iq:register query"`
-	}{
-		IQ:    iq,
-		Query: query,
+	// Create a buffer to encode the query payload
+	var queryBuf bytes.Buffer
+	encoder := xml.NewEncoder(&queryBuf)
+	if err := encoder.Encode(query); err != nil {
+		return &InBandRegistrationResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to encode registration query: %v", err),
+		}, nil
 	}
+	encoder.Flush()
 
-	// Encode and send the registration IQ
-	if err := r.client.session.Encode(ctx, iqWithQuery); err != nil {
-		return &RegistrationResponse{
+	// Create TokenReader from the encoded query by using xml.NewDecoder
+	payloadReader := xml.NewDecoder(bytes.NewReader(queryBuf.Bytes()))
+
+	// Send the registration IQ and wait for response
+	response, err := r.client.session.SendIQElement(ctx, payloadReader, iq)
+	if err != nil {
+		return &InBandRegistrationResponse{
 			Success: false,
 			Error:   fmt.Sprintf("failed to send registration request: %v", err),
 		}, nil
 	}
+	defer response.Close()
 
-	// Wait for response
-	select {
-	case response := <-responseChannel:
-		r.logger.LogInfo("Account registration completed", "server", serverJID.String(), "username", request.Username, "success", response.Success)
-		return response, nil
-	case <-ctx.Done():
-		return &RegistrationResponse{
-			Success: false,
-			Error:   fmt.Sprintf("timeout registering account with %s", serverJID.String()),
-		}, nil
+	// Try to unmarshal the response as an error IQ first
+	responseIQ, err := stanza.UnmarshalIQError(response, xml.StartElement{})
+	registrationResponse := &InBandRegistrationResponse{}
+
+	if err != nil {
+		// If we can't unmarshal as error IQ, check if it's a success response
+		// For now, assume success if no error occurred during sending
+		registrationResponse.Success = true
+		registrationResponse.Message = "Account registration completed successfully"
+		r.logger.LogDebug("Registration response could not be parsed as error IQ, assuming success", "server", serverJID.String(), "username", request.Username, "error", err)
+	} else {
+		// Successfully unmarshaled - check IQ type
+		if responseIQ.Type == stanza.ErrorIQ {
+			registrationResponse.Success = false
+			registrationResponse.Error = "Server returned error for registration request"
+			r.logger.LogWarn("Registration failed with server error", "server", serverJID.String(), "username", request.Username, "iq_type", responseIQ.Type)
+		} else {
+			registrationResponse.Success = true
+			registrationResponse.Message = "Account registration completed successfully"
+		}
 	}
+
+	r.logger.LogInfo("Account registration completed", "server", serverJID.String(), "username", request.Username, "success", registrationResponse.Success)
+	return registrationResponse, nil
 }
 
 // ChangePassword changes the password for an existing account
-func (r *InBandRegistration) ChangePassword(serverJID jid.JID, username, oldPassword, newPassword string) (*RegistrationResponse, error) {
+func (r *InBandRegistration) ChangePassword(serverJID jid.JID, username, oldPassword, newPassword string) (*InBandRegistrationResponse, error) {
 	if r.client.session == nil {
 		return nil, fmt.Errorf("XMPP session not established")
 	}
 
 	if username == "" || oldPassword == "" || newPassword == "" {
-		return &RegistrationResponse{
+		return &InBandRegistrationResponse{
 			Success: false,
 			Error:   "username, old password, and new password are required",
 		}, nil
@@ -269,7 +282,7 @@ func (r *InBandRegistration) ChangePassword(serverJID jid.JID, username, oldPass
 		To:   serverJID,
 	}
 
-	query := RegistrationQuery{
+	query := InBandRegistrationQuery{
 		Username: username,
 		Password: newPassword,
 	}
@@ -282,7 +295,7 @@ func (r *InBandRegistration) ChangePassword(serverJID jid.JID, username, oldPass
 	// Create the IQ with query payload
 	iqWithQuery := struct {
 		stanza.IQ
-		Query RegistrationQuery `xml:"jabber:iq:register query"`
+		Query InBandRegistrationQuery `xml:"jabber:iq:register query"`
 	}{
 		IQ:    iq,
 		Query: query,
@@ -290,14 +303,14 @@ func (r *InBandRegistration) ChangePassword(serverJID jid.JID, username, oldPass
 
 	// Send the password change IQ
 	if err := r.client.session.Encode(ctx, iqWithQuery); err != nil {
-		return &RegistrationResponse{
+		return &InBandRegistrationResponse{
 			Success: false,
 			Error:   fmt.Sprintf("failed to send password change request: %v", err),
 		}, nil
 	}
 
 	// In practice, you'd wait for the IQ response here
-	response := &RegistrationResponse{
+	response := &InBandRegistrationResponse{
 		Success: true,
 		Message: "Password changed successfully",
 	}
@@ -306,10 +319,17 @@ func (r *InBandRegistration) ChangePassword(serverJID jid.JID, username, oldPass
 	return response, nil
 }
 
-// CancelRegistration cancels/removes an existing registration
-func (r *InBandRegistration) CancelRegistration(serverJID jid.JID) (*RegistrationResponse, error) {
+// CancelRegistration cancels/removes an existing registration for the specified user
+func (r *InBandRegistration) CancelRegistration(serverJID jid.JID, request *CancellationRequest) (*InBandRegistrationResponse, error) {
 	if r.client.session == nil {
 		return nil, fmt.Errorf("XMPP session not established")
+	}
+
+	if request.Username == "" {
+		return &InBandRegistrationResponse{
+			Success: false,
+			Error:   "username is required",
+		}, nil
 	}
 
 	// Create cancellation IQ
@@ -318,38 +338,62 @@ func (r *InBandRegistration) CancelRegistration(serverJID jid.JID) (*Registratio
 		To:   serverJID,
 	}
 
-	query := RegistrationQuery{
-		Remove: &struct{}{}, // Empty struct indicates removal
+	query := InBandRegistrationQuery{
+		Username: request.Username, // Specify which user to remove
+		Remove:   &struct{}{},      // Removal flag
 	}
 
 	ctx, cancel := context.WithTimeout(r.client.ctx, 10*time.Second)
 	defer cancel()
 
-	r.logger.LogInfo("Cancelling registration", "server", serverJID.String())
+	r.logger.LogInfo("Cancelling registration", "server", serverJID.String(), "username", request.Username)
 
-	// Create the IQ with query payload
-	iqWithQuery := struct {
-		stanza.IQ
-		Query RegistrationQuery `xml:"jabber:iq:register query"`
-	}{
-		IQ:    iq,
-		Query: query,
+	// Create a buffer to encode the query payload
+	var queryBuf bytes.Buffer
+	encoder := xml.NewEncoder(&queryBuf)
+	if err := encoder.Encode(query); err != nil {
+		return &InBandRegistrationResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to encode cancellation query: %v", err),
+		}, nil
 	}
+	encoder.Flush()
 
-	// Send the cancellation IQ
-	if err := r.client.session.Encode(ctx, iqWithQuery); err != nil {
-		return &RegistrationResponse{
+	// Create TokenReader from the encoded query
+	payloadReader := xml.NewDecoder(bytes.NewReader(queryBuf.Bytes()))
+
+	// Send the cancellation IQ and wait for response
+	response, err := r.client.session.SendIQElement(ctx, payloadReader, iq)
+	if err != nil {
+		return &InBandRegistrationResponse{
 			Success: false,
 			Error:   fmt.Sprintf("failed to send registration cancellation request: %v", err),
 		}, nil
 	}
+	defer response.Close()
 
-	// In practice, you'd wait for the IQ response here
-	response := &RegistrationResponse{
-		Success: true,
-		Message: "Registration cancelled successfully",
+	// Try to unmarshal the response as an error IQ first
+	responseIQ, err := stanza.UnmarshalIQError(response, xml.StartElement{})
+	cancellationResponse := &InBandRegistrationResponse{}
+
+	if err != nil {
+		// If we can't unmarshal as error IQ, check if it's a success response
+		// For now, assume success if no error occurred during sending
+		cancellationResponse.Success = true
+		cancellationResponse.Message = "Registration cancelled successfully"
+		r.logger.LogDebug("Cancellation response could not be parsed as error IQ, assuming success", "server", serverJID.String(), "username", request.Username, "error", err)
+	} else {
+		// Successfully unmarshaled - check IQ type
+		if responseIQ.Type == stanza.ErrorIQ {
+			cancellationResponse.Success = false
+			cancellationResponse.Error = "Server returned error for cancellation request"
+			r.logger.LogWarn("Registration cancellation failed with server error", "server", serverJID.String(), "username", request.Username, "iq_type", responseIQ.Type)
+		} else {
+			cancellationResponse.Success = true
+			cancellationResponse.Message = "Registration cancelled successfully"
+		}
 	}
 
-	r.logger.LogInfo("Registration cancellation completed", "server", serverJID.String())
-	return response, nil
+	r.logger.LogInfo("Registration cancellation completed", "server", serverJID.String(), "username", request.Username, "success", cancellationResponse.Success)
+	return cancellationResponse, nil
 }
