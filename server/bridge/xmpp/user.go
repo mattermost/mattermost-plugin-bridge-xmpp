@@ -14,6 +14,14 @@ import (
 	xmppClient "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/xmpp"
 )
 
+const (
+	// ghostUserInactivityTimeout is the duration after which inactive ghost users are disconnected
+	ghostUserInactivityTimeout = 2 * time.Minute
+
+	// ghostUserActivityCheckInterval is how often we check for inactive ghost users
+	ghostUserActivityCheckInterval = 1 * time.Minute
+)
+
 // User represents an XMPP user that implements the BridgeUser interface
 type User struct {
 	// User identity
@@ -29,6 +37,11 @@ type User struct {
 	stateMu   sync.RWMutex
 	connected atomic.Bool
 
+	// Activity tracking for lifecycle management
+	lastActivity         time.Time
+	activityMu           sync.RWMutex
+	enableLifecycleCheck bool // Whether this user should be subject to inactivity disconnection
+
 	// Configuration
 	config *config.Configuration
 
@@ -42,6 +55,11 @@ type User struct {
 
 // NewXMPPUser creates a new XMPP user with specific credentials
 func NewXMPPUser(id, displayName, jid, password string, cfg *config.Configuration, log logger.Logger) *User {
+	return NewXMPPUserWithActivity(id, displayName, jid, password, cfg, log, time.Now(), false)
+}
+
+// NewXMPPUserWithActivity creates a new XMPP user with specific credentials, last activity time, and lifecycle setting
+func NewXMPPUserWithActivity(id, displayName, jid, password string, cfg *config.Configuration, log logger.Logger, lastActivity time.Time, enableLifecycle bool) *User {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create TLS config based on certificate verification setting
@@ -61,15 +79,17 @@ func NewXMPPUser(id, displayName, jid, password string, cfg *config.Configuratio
 	)
 
 	return &User{
-		id:          id,
-		displayName: displayName,
-		jid:         jid,
-		client:      client,
-		state:       model.UserStateOffline,
-		config:      cfg,
-		ctx:         ctx,
-		cancel:      cancel,
-		logger:      log,
+		id:                   id,
+		displayName:          displayName,
+		jid:                  jid,
+		client:               client,
+		state:                model.UserStateOffline,
+		config:               cfg,
+		ctx:                  ctx,
+		cancel:               cancel,
+		logger:               log,
+		lastActivity:         lastActivity,    // Use provided activity time
+		enableLifecycleCheck: enableLifecycle, // Use provided lifecycle setting
 	}
 }
 
@@ -163,6 +183,9 @@ func (u *User) SendMessageToChannel(channelID, message string) error {
 	}
 
 	u.logger.LogDebug("XMPP user sending message to channel", "user_id", u.id, "channel_id", channelID)
+
+	// Update activity timestamp for this user interaction
+	u.UpdateLastActivity()
 
 	// Ensure we're joined to the room before sending the message
 	if err := u.EnsureJoinedToRoom(channelID); err != nil {
@@ -366,4 +389,43 @@ func (u *User) GetJID() string {
 // GetClient returns the underlying XMPP client (for advanced operations)
 func (u *User) GetClient() *xmppClient.Client {
 	return u.client
+}
+
+// Activity tracking methods
+
+// UpdateLastActivity updates the last activity timestamp for this user
+func (u *User) UpdateLastActivity() {
+	u.activityMu.Lock()
+	defer u.activityMu.Unlock()
+	u.lastActivity = time.Now()
+	u.logger.LogDebug("Updated last activity for user", "user_id", u.id, "timestamp", u.lastActivity)
+}
+
+// GetLastActivity returns the last activity timestamp
+func (u *User) GetLastActivity() time.Time {
+	u.activityMu.RLock()
+	defer u.activityMu.RUnlock()
+	return u.lastActivity
+}
+
+// IsInactive returns true if the user has been inactive longer than the specified duration
+func (u *User) IsInactive(inactivityThreshold time.Duration) bool {
+	u.activityMu.RLock()
+	defer u.activityMu.RUnlock()
+	return time.Since(u.lastActivity) > inactivityThreshold
+}
+
+// SetLifecycleManagement enables or disables lifecycle management for this user
+func (u *User) SetLifecycleManagement(enabled bool) {
+	u.activityMu.Lock()
+	defer u.activityMu.Unlock()
+	u.enableLifecycleCheck = enabled
+	u.logger.LogDebug("Lifecycle management setting changed", "user_id", u.id, "enabled", enabled)
+}
+
+// IsLifecycleManaged returns true if this user is subject to lifecycle management
+func (u *User) IsLifecycleManaged() bool {
+	u.activityMu.RLock()
+	defer u.activityMu.RUnlock()
+	return u.enableLifecycleCheck
 }

@@ -226,6 +226,11 @@ func (b *xmppBridge) Start() error {
 	// Initialize proper user manager now that we're connected and server capabilities are detected
 	b.userManager = b.createUserManager(cfg, b.bridgeID, b.logger, b.kvstore)
 
+	// Start the user manager to enable lifecycle management
+	if err := b.userManager.Start(b.ctx); err != nil {
+		return fmt.Errorf("failed to start user manager: %w", err)
+	}
+
 	// Load and join mapped channels
 	if err := b.loadAndJoinMappedChannels(); err != nil {
 		b.logger.LogWarn("Failed to join some mapped channels", "error", err)
@@ -244,6 +249,11 @@ func (b *xmppBridge) Stop() error {
 
 	if b.cancel != nil {
 		b.cancel()
+	}
+
+	// Stop the user manager to stop lifecycle management
+	if err := b.userManager.Stop(); err != nil {
+		b.logger.LogWarn("Error stopping user manager", "error", err)
 	}
 
 	if b.bridgeClient != nil {

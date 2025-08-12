@@ -123,6 +123,12 @@ func (h *xmppMessageHandler) sendMessageViaGhostUser(xmppUserManager *UserManage
 		return h.sendMessageViaBridgeUser(msg, roomJID)
 	}
 
+	// Update user activity in KV store after successful message send
+	if err := xmppUserManager.UpdateUserActivity(msg.SourceUserID); err != nil {
+		h.logger.LogError("Failed to update user activity after message send, user may never disconnect", "user_id", msg.SourceUserID, "error", err)
+		// Don't fail the message send for activity update failures
+	}
+
 	h.logger.LogDebug("Message sent via ghost user",
 		"source_user_id", msg.SourceUserID,
 		"ghost_jid", xmppUser.GetJID(),

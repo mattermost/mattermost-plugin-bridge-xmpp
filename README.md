@@ -9,8 +9,8 @@ This plugin provides bidirectional message synchronization between Mattermost an
 
 - Bidirectional message synchronization (Mattermost ↔ XMPP)
 - XMPP Multi-User Chat (MUC) support
-- Configurable username prefixes for XMPP users in Mattermost
-- Ghost user management for cross-platform user representation
+- Configurable username prefixes for XMPP users
+- Ghost user management for cross-platform user representation on the XMPP server with connection lifecycle management (**XEP-0077 only**)
 - Comprehensive XMPP client with SASL Plain authentication
 
 To learn more about plugins, see [our plugin documentation](https://developers.mattermost.com/extend/plugins/).
@@ -72,7 +72,7 @@ To avoid having to manually install your plugin, build and deploy your plugin us
     }
 ```
 
-### Development guidance 
+### Development guidance
 
 1. Fewer packages is better: default to the main package unless there's good reason for a new package.
 
@@ -84,7 +84,7 @@ To avoid having to manually install your plugin, build and deploy your plugin us
 
 ### Modifying the server boilerplate
 
-The server code comes with some boilerplate for creating an api, using slash commands, accessing the kvstore and using the cluster package for jobs. 
+The server code comes with some boilerplate for creating an api, using slash commands, accessing the kvstore and using the cluster package for jobs.
 
 #### Api
 
