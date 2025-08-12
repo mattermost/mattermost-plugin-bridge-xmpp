@@ -182,11 +182,15 @@ func (c *Client) GetInBandRegistration() (*InBandRegistration, error) {
 	return c.XEPFeatures.InBandRegistration, nil
 }
 
+// DetectServerCapabilities discovers which XEPs are supported by the server (public method)
+func (c *Client) DetectServerCapabilities() error {
+	return c.detectServerCapabilities()
+}
+
 // detectServerCapabilities discovers which XEPs are supported by the server
-func (c *Client) detectServerCapabilities() {
+func (c *Client) detectServerCapabilities() error {
 	if c.session == nil {
-		c.logger.LogError("Cannot detect server capabilities: no session")
-		return
+		return fmt.Errorf("no XMPP session available for capability detection")
 	}
 
 	c.logger.LogDebug("Detecting server capabilities for XEP support")
@@ -203,6 +207,7 @@ func (c *Client) detectServerCapabilities() {
 
 	enabledFeatures := c.XEPFeatures.ListFeatures()
 	c.logger.LogInfo("Server capability detection completed", "enabled_xeps", enabledFeatures)
+	return nil
 }
 
 // checkInBandRegistrationSupport checks if the server supports XEP-0077 In-Band Registration
@@ -355,10 +360,6 @@ func (c *Client) Connect() error {
 			return fmt.Errorf("failed to start session serving")
 		}
 		c.logger.LogInfo("XMPP client connected successfully", "jid", c.jidAddr.String())
-
-		// Detect server capabilities and enable supported XEPs
-		go c.detectServerCapabilities()
-
 		return nil
 	case <-time.After(10 * time.Second):
 		return fmt.Errorf("timeout waiting for session to be ready")
@@ -690,6 +691,51 @@ func (c *Client) SetOfflinePresence() error {
 		return fmt.Errorf("failed to send offline presence: %w", err)
 	}
 
+	return nil
+}
+
+// CheckRoomMembership verifies if the client is joined to an XMPP room
+// Since disco#items is not available in this XMPP library, we use a simpler approach:
+// we assume the user is not joined and always attempt to join (XMPP MUC handles duplicate joins gracefully)
+func (c *Client) CheckRoomMembership(roomJID string) (bool, error) {
+	if c.session == nil {
+		return false, fmt.Errorf("XMPP session not established")
+	}
+
+	c.logger.LogDebug("Checking room membership (conservative approach - assume not joined)", "room_jid", roomJID)
+
+	// For safety, we always return false to ensure EnsureJoinedToRoom will attempt to join
+	// XMPP MUC servers handle duplicate joins gracefully by ignoring them
+	return false, nil
+}
+
+// EnsureJoinedToRoom ensures the client is joined to an XMPP room, joining if necessary
+func (c *Client) EnsureJoinedToRoom(roomJID string) error {
+	if c.session == nil {
+		return fmt.Errorf("XMPP session not established")
+	}
+
+	c.logger.LogDebug("Ensuring joined to room", "room_jid", roomJID)
+
+	// First check if we're already joined
+	isJoined, err := c.CheckRoomMembership(roomJID)
+	if err != nil {
+		c.logger.LogWarn("Failed to check room membership, attempting to join anyway", "room_jid", roomJID, "error", err)
+		// Continue with join attempt even if membership check failed
+	} else if isJoined {
+		c.logger.LogDebug("Already joined to room", "room_jid", roomJID)
+		return nil
+	}
+
+	// Not joined, attempt to join the room
+	c.logger.LogDebug("Not joined to room, attempting to join", "room_jid", roomJID)
+
+	err = c.JoinRoom(roomJID)
+	if err != nil {
+		return fmt.Errorf("failed to join room %s: %w", roomJID, err)
+	}
+
+	c.logger.LogInfo("Successfully joined room", "room_jid", roomJID)
 	return nil
 }
 

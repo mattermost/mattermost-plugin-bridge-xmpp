@@ -3,11 +3,11 @@ package xmpp
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"fmt"
 
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"mellium.im/xmlstream"
@@ -66,7 +66,6 @@ func NewBridge(log logger.Logger, api plugin.API, store kvstore.KVStore, cfg *co
 		cancel:           cancel,
 		channelMappings:  make(map[string]string),
 		config:           cfg,
-		userManager:      bridge.NewUserManager(bridgeID, log),
 		incomingMessages: make(chan *pluginModel.DirectionalMessage, defaultMessageBufferSize),
 		bridgeID:         bridgeID,
 		remoteID:         remoteID,
@@ -80,6 +79,9 @@ func NewBridge(log logger.Logger, api plugin.API, store kvstore.KVStore, cfg *co
 	if cfg.EnableSync && cfg.XMPPServerURL != "" && cfg.XMPPUsername != "" && cfg.XMPPPassword != "" {
 		b.bridgeClient = b.createXMPPClient(cfg)
 	}
+
+	// Initialize with a default user manager - will be replaced in Start() after XEP detection
+	b.userManager = bridge.NewUserManager(bridgeID, log)
 
 	return b
 }
@@ -100,6 +102,64 @@ func (b *xmppBridge) createXMPPClient(cfg *config.Configuration) *xmppClient.Cli
 		tlsConfig,
 		b.logger,
 	)
+}
+
+// createUserManager creates the appropriate user manager based on configuration
+func (b *xmppBridge) createUserManager(cfg *config.Configuration, bridgeID string, log logger.Logger, store kvstore.KVStore) pluginModel.BridgeUserManager {
+	b.logger.LogDebug("Creating user manager", "enable_ghost_users", cfg.EnableXMPPGhostUsers, "enable_sync", cfg.EnableSync, "ghost_prefix", cfg.XMPPGhostUserPrefix)
+
+	// Check if ghost users are enabled in configuration
+	if !cfg.IsGhostUserEnabled() {
+		b.logger.LogInfo("Ghost users disabled, using bridge user manager", "enable_ghost_users", cfg.EnableXMPPGhostUsers, "enable_sync", cfg.EnableSync)
+		return bridge.NewUserManager(bridgeID, log)
+	}
+
+	// Check if we have a bridge client to test XEP-0077 support
+	if b.bridgeClient == nil {
+		b.logger.LogWarn("Bridge client not available, cannot check XEP-0077 support, falling back to bridge user manager")
+		return bridge.NewUserManager(bridgeID, log)
+	}
+
+	// Check XEP-0077 server support
+	if supported, err := b.checkXEP0077Support(); err != nil {
+		b.logger.LogWarn("Failed to check XEP-0077 support, falling back to bridge user manager", "error", err)
+		return bridge.NewUserManager(bridgeID, log)
+	} else if !supported {
+		b.logger.LogInfo("XEP-0077 In-Band Registration not supported by server, using bridge user manager")
+		return bridge.NewUserManager(bridgeID, log)
+	}
+
+	// Both ghost users are enabled and XEP-0077 is supported - use ghost user manager
+	b.logger.LogInfo("Ghost users enabled and XEP-0077 supported, using XMPP ghost user manager")
+	return NewXMPPUserManager(bridgeID, log, store, b.api, cfg, b.bridgeClient)
+}
+
+// waitForCapabilityDetection waits for server capability detection to complete
+func (b *xmppBridge) waitForCapabilityDetection() error {
+	if b.bridgeClient == nil {
+		return fmt.Errorf("bridge client not available")
+	}
+
+	// Trigger capability detection synchronously
+	if err := b.bridgeClient.DetectServerCapabilities(); err != nil {
+		return fmt.Errorf("failed to detect server capabilities: %w", err)
+	}
+
+	return nil
+}
+
+// checkXEP0077Support checks if the XMPP server supports XEP-0077 In-Band Registration
+func (b *xmppBridge) checkXEP0077Support() (bool, error) {
+	if b.bridgeClient == nil {
+		return false, fmt.Errorf("bridge client not available")
+	}
+
+	// Check XEP features from the client
+	if b.bridgeClient.XEPFeatures == nil {
+		return false, fmt.Errorf("XEP features not initialized")
+	}
+
+	return b.bridgeClient.XEPFeatures.InBandRegistration != nil, nil
 }
 
 // getConfiguration safely retrieves the current configuration
@@ -130,6 +190,9 @@ func (b *xmppBridge) UpdateConfiguration(cfg *config.Configuration) error {
 			b.logger.LogError("Failed to disconnect old XMPP bridge client")
 		}
 		b.bridgeClient = b.createXMPPClient(cfg)
+
+		// Recreate user manager since ghost user settings or XEP support may have changed
+		b.userManager = b.createUserManager(cfg, b.bridgeID, b.logger, b.kvstore)
 	}
 	b.configMu.Unlock()
 
@@ -173,6 +236,14 @@ func (b *xmppBridge) Start() error {
 	if err := b.connectToXMPP(); err != nil {
 		return fmt.Errorf("failed to connect to XMPP server: %w", err)
 	}
+
+	// Wait for server capability detection to complete before creating user manager
+	if err := b.waitForCapabilityDetection(); err != nil {
+		return fmt.Errorf("failed to detect server capabilities: %w", err)
+	}
+
+	// Initialize proper user manager now that we're connected and server capabilities are detected
+	b.userManager = b.createUserManager(cfg, b.bridgeID, b.logger, b.kvstore)
 
 	// Load and join mapped channels
 	if err := b.loadAndJoinMappedChannels(); err != nil {
@@ -604,6 +675,30 @@ func (b *xmppBridge) ID() string {
 	return b.bridgeID
 }
 
+// isBridgeUserMessage checks if the incoming XMPP message is from our bridge user to prevent loops
+func (b *xmppBridge) isBridgeUserMessage(msg *stanza.Message) bool {
+	// Skip messages from our own XMPP user to prevent loops
+	// In MUC, messages come back as roomJID/nickname, so we need to check the nickname/resource
+	bridgeJID := b.bridgeClient.GetJID()
+	bridgeNickname := bridgeJID.Localpart() // Use localpart as nickname
+	incomingResource := msg.From.Resourcepart()
+
+	b.logger.LogDebug("Bridge user comparison details",
+		"bridge_jid", bridgeJID.String(),
+		"bridge_nickname", bridgeNickname,
+		"incoming_resource", incomingResource)
+
+	// Check multiple ways this could be our bridge user:
+	// 1. Direct nickname match
+	// 2. Resource starts with "mattermost_" (common pattern)
+	// 3. Resource contains bridge-related identifiers
+	isBridgeUser := incomingResource == bridgeNickname ||
+		strings.HasPrefix(incomingResource, "mattermost_") ||
+		strings.Contains(incomingResource, "bridge")
+
+	return isBridgeUser
+}
+
 // handleIncomingXMPPMessage handles incoming XMPP messages and converts them to bridge messages
 //
 //nolint:gocritic // msg parameter must match external XMPP library handler signature
@@ -639,10 +734,10 @@ func (b *xmppBridge) handleIncomingXMPPMessage(msg stanza.Message, t xmlstream.T
 
 	userID, displayName := b.bridgeClient.ExtractUserInfo(msg.From)
 
-	// Skip messages from our own XMPP user to prevent loops
-	if userID == b.bridgeClient.GetJID().String() {
-		b.logger.LogDebug("Skipping message from our own XMPP user to prevent loop",
-			"our_jid", b.bridgeClient.GetJID().String(),
+	// Check if this message is from our bridge user to prevent loops
+	if b.isBridgeUserMessage(&msg) {
+		b.logger.LogDebug("Ignoring message from bridge user to prevent loops",
+			"incoming_message_from", msg.From.String(),
 			"source_user_id", userID)
 		return nil
 	}

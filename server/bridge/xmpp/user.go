@@ -14,10 +14,8 @@ import (
 	xmppClient "github.com/mattermost/mattermost-plugin-bridge-xmpp/server/xmpp"
 )
 
-// XMPPUser represents an XMPP user that implements the BridgeUser interface
-//
-//nolint:revive // XMPPUser is clearer than User in this context
-type XMPPUser struct {
+// User represents an XMPP user that implements the BridgeUser interface
+type User struct {
 	// User identity
 	id          string
 	displayName string
@@ -42,8 +40,8 @@ type XMPPUser struct {
 	logger logger.Logger
 }
 
-// NewXMPPUser creates a new XMPP user
-func NewXMPPUser(id, displayName, jid string, cfg *config.Configuration, log logger.Logger) *XMPPUser {
+// NewXMPPUser creates a new XMPP user with specific credentials
+func NewXMPPUser(id, displayName, jid, password string, cfg *config.Configuration, log logger.Logger) *User {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create TLS config based on certificate verification setting
@@ -51,18 +49,18 @@ func NewXMPPUser(id, displayName, jid string, cfg *config.Configuration, log log
 		InsecureSkipVerify: cfg.XMPPInsecureSkipVerify, //nolint:gosec // Allow insecure TLS for testing environments
 	}
 
-	// Create XMPP client for this user
+	// Create XMPP client for this user with provided credentials
 	client := xmppClient.NewClientWithTLS(
 		cfg.XMPPServerURL,
 		jid,
-		cfg.XMPPPassword, // This might need to be user-specific in the future
+		password, // Use the provided password (ghost password or bridge password)
 		cfg.GetXMPPResource(),
 		id, // Use user ID as remote ID
 		tlsConfig,
 		log,
 	)
 
-	return &XMPPUser{
+	return &User{
 		id:          id,
 		displayName: displayName,
 		jid:         jid,
@@ -76,7 +74,7 @@ func NewXMPPUser(id, displayName, jid string, cfg *config.Configuration, log log
 }
 
 // Validation
-func (u *XMPPUser) Validate() error {
+func (u *User) Validate() error {
 	if u.id == "" {
 		return fmt.Errorf("user ID cannot be empty")
 	}
@@ -96,22 +94,22 @@ func (u *XMPPUser) Validate() error {
 }
 
 // Identity (bridge-agnostic)
-func (u *XMPPUser) GetID() string {
+func (u *User) GetID() string {
 	return u.id
 }
 
-func (u *XMPPUser) GetDisplayName() string {
+func (u *User) GetDisplayName() string {
 	return u.displayName
 }
 
 // State management
-func (u *XMPPUser) GetState() model.UserState {
+func (u *User) GetState() model.UserState {
 	u.stateMu.RLock()
 	defer u.stateMu.RUnlock()
 	return u.state
 }
 
-func (u *XMPPUser) SetState(state model.UserState) error {
+func (u *User) SetState(state model.UserState) error {
 	u.stateMu.Lock()
 	defer u.stateMu.Unlock()
 
@@ -125,7 +123,7 @@ func (u *XMPPUser) SetState(state model.UserState) error {
 }
 
 // Channel operations
-func (u *XMPPUser) JoinChannel(channelID string) error {
+func (u *User) JoinChannel(channelID string) error {
 	if !u.connected.Load() {
 		return fmt.Errorf("user %s is not connected", u.id)
 	}
@@ -142,7 +140,7 @@ func (u *XMPPUser) JoinChannel(channelID string) error {
 	return nil
 }
 
-func (u *XMPPUser) LeaveChannel(channelID string) error {
+func (u *User) LeaveChannel(channelID string) error {
 	if !u.connected.Load() {
 		return fmt.Errorf("user %s is not connected", u.id)
 	}
@@ -159,12 +157,17 @@ func (u *XMPPUser) LeaveChannel(channelID string) error {
 	return nil
 }
 
-func (u *XMPPUser) SendMessageToChannel(channelID, message string) error {
+func (u *User) SendMessageToChannel(channelID, message string) error {
 	if !u.connected.Load() {
 		return fmt.Errorf("user %s is not connected", u.id)
 	}
 
 	u.logger.LogDebug("XMPP user sending message to channel", "user_id", u.id, "channel_id", channelID)
+
+	// Ensure we're joined to the room before sending the message
+	if err := u.EnsureJoinedToRoom(channelID); err != nil {
+		return fmt.Errorf("failed to ensure joined to room before sending message: %w", err)
+	}
 
 	// Create message request for XMPP
 	req := xmppClient.MessageRequest{
@@ -183,7 +186,7 @@ func (u *XMPPUser) SendMessageToChannel(channelID, message string) error {
 }
 
 // Connection lifecycle
-func (u *XMPPUser) Connect() error {
+func (u *User) Connect() error {
 	u.logger.LogDebug("Connecting XMPP user", "user_id", u.id, "jid", u.jid)
 
 	err := u.client.Connect()
@@ -207,7 +210,7 @@ func (u *XMPPUser) Connect() error {
 	return nil
 }
 
-func (u *XMPPUser) Disconnect() error {
+func (u *User) Disconnect() error {
 	u.logger.LogDebug("Disconnecting XMPP user", "user_id", u.id, "jid", u.jid)
 
 	if u.client == nil {
@@ -226,11 +229,11 @@ func (u *XMPPUser) Disconnect() error {
 	return err
 }
 
-func (u *XMPPUser) IsConnected() bool {
+func (u *User) IsConnected() bool {
 	return u.connected.Load()
 }
 
-func (u *XMPPUser) Ping() error {
+func (u *User) Ping() error {
 	if !u.connected.Load() {
 		return fmt.Errorf("XMPP user %s is not connected", u.id)
 	}
@@ -242,8 +245,36 @@ func (u *XMPPUser) Ping() error {
 	return u.client.Ping()
 }
 
+// CheckRoomMembership checks if the user is joined to an XMPP room
+func (u *User) CheckRoomMembership(channelID string) (bool, error) {
+	if !u.connected.Load() {
+		return false, fmt.Errorf("XMPP user %s is not connected", u.id)
+	}
+
+	if u.client == nil {
+		return false, fmt.Errorf("XMPP client not initialized for user %s", u.id)
+	}
+
+	return u.client.CheckRoomMembership(channelID)
+}
+
+// EnsureJoinedToRoom ensures the user is joined to an XMPP room, joining if necessary
+func (u *User) EnsureJoinedToRoom(channelID string) error {
+	if !u.connected.Load() {
+		return fmt.Errorf("XMPP user %s is not connected", u.id)
+	}
+
+	if u.client == nil {
+		return fmt.Errorf("XMPP client not initialized for user %s", u.id)
+	}
+
+	u.logger.LogDebug("Ensuring user is joined to room", "user_id", u.id, "channel_id", channelID)
+
+	return u.client.EnsureJoinedToRoom(channelID)
+}
+
 // CheckChannelExists checks if an XMPP room/channel exists
-func (u *XMPPUser) CheckChannelExists(channelID string) (bool, error) {
+func (u *User) CheckChannelExists(channelID string) (bool, error) {
 	if !u.connected.Load() {
 		return false, fmt.Errorf("XMPP user %s is not connected", u.id)
 	}
@@ -256,7 +287,7 @@ func (u *XMPPUser) CheckChannelExists(channelID string) (bool, error) {
 }
 
 // Goroutine lifecycle
-func (u *XMPPUser) Start(ctx context.Context) error {
+func (u *User) Start(ctx context.Context) error {
 	u.logger.LogDebug("Starting XMPP user", "user_id", u.id, "jid", u.jid)
 
 	// Update context
@@ -274,7 +305,7 @@ func (u *XMPPUser) Start(ctx context.Context) error {
 	return nil
 }
 
-func (u *XMPPUser) Stop() error {
+func (u *User) Stop() error {
 	u.logger.LogDebug("Stopping XMPP user", "user_id", u.id, "jid", u.jid)
 
 	// Cancel context to stop goroutines
@@ -292,7 +323,7 @@ func (u *XMPPUser) Stop() error {
 }
 
 // connectionMonitor monitors the XMPP connection for this user
-func (u *XMPPUser) connectionMonitor() {
+func (u *User) connectionMonitor() {
 	u.logger.LogDebug("Starting connection monitor for XMPP user", "user_id", u.id)
 
 	// Simple monitoring - check connection periodically
@@ -328,11 +359,55 @@ func (u *XMPPUser) connectionMonitor() {
 }
 
 // GetJID returns the XMPP JID for this user (XMPP-specific method)
-func (u *XMPPUser) GetJID() string {
+func (u *User) GetJID() string {
 	return u.jid
 }
 
 // GetClient returns the underlying XMPP client (for advanced operations)
-func (u *XMPPUser) GetClient() *xmppClient.Client {
+func (u *User) GetClient() *xmppClient.Client {
 	return u.client
+}
+
+// UpdateCredentials updates the user's JID and password for ghost user mode
+// This creates a new XMPP client with the updated credentials
+func (u *User) UpdateCredentials(newJID, newPassword string) error {
+	u.logger.LogDebug("Updating XMPP user credentials", "user_id", u.id, "old_jid", u.jid, "new_jid", newJID)
+
+	// Disconnect existing client if connected
+	wasConnected := u.IsConnected()
+	if wasConnected {
+		if err := u.Disconnect(); err != nil {
+			u.logger.LogWarn("Error disconnecting before credential update", "user_id", u.id, "error", err)
+		}
+	}
+
+	// Create TLS config based on certificate verification setting
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: u.config.XMPPInsecureSkipVerify, //nolint:gosec // Allow insecure TLS for testing environments
+	}
+
+	// Create new XMPP client with updated credentials
+	newClient := xmppClient.NewClientWithTLS(
+		u.config.XMPPServerURL,
+		newJID,
+		newPassword,
+		u.config.GetXMPPResource(),
+		u.id, // Use user ID as remote ID
+		tlsConfig,
+		u.logger,
+	)
+
+	// Update user fields
+	u.jid = newJID
+	u.client = newClient
+
+	// Reconnect if we were previously connected
+	if wasConnected {
+		if err := u.Connect(); err != nil {
+			return fmt.Errorf("failed to reconnect after credential update: %w", err)
+		}
+	}
+
+	u.logger.LogInfo("XMPP user credentials updated successfully", "user_id", u.id, "new_jid", newJID)
+	return nil
 }

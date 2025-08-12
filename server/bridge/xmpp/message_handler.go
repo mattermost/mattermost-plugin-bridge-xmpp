@@ -58,14 +58,6 @@ func (h *xmppMessageHandler) GetSupportedMessageTypes() []string {
 
 // sendMessageToXMPP sends a message to an XMPP room
 func (h *xmppMessageHandler) sendMessageToXMPP(msg *pluginModel.BridgeMessage) error {
-	if h.bridge.bridgeClient == nil {
-		return fmt.Errorf("XMPP client not initialized")
-	}
-
-	if !h.bridge.connected.Load() {
-		return fmt.Errorf("not connected to XMPP server")
-	}
-
 	// Get the XMPP room JID from the channel mapping
 	roomJID, err := h.bridge.GetChannelMapping(msg.SourceChannelID)
 	if err != nil {
@@ -75,32 +67,114 @@ func (h *xmppMessageHandler) sendMessageToXMPP(msg *pluginModel.BridgeMessage) e
 		return fmt.Errorf("channel is not mapped to any XMPP room")
 	}
 
-	// Format the message content with user information
-	content := h.formatMessageContent(msg)
-
-	// Create XMPP message request
-	req := xmppClient.MessageRequest{
-		RoomJID: roomJID,
-		Message: content,
+	// Check if we're using ghost users (XMPPUserManager)
+	userManager := h.bridge.userManager
+	if userManager == nil {
+		return fmt.Errorf("user manager not available")
 	}
 
-	// Send the message
-	_, err = h.bridge.bridgeClient.SendMessage(&req)
+	h.logger.LogDebug("Routing message", "manager_type", fmt.Sprintf("%T", userManager), "source_user_id", msg.SourceUserID, "room_jid", roomJID)
+
+	// Check if this is an XMPPUserManager (ghost users enabled)
+	if xmppUserManager, ok := userManager.(*UserManager); ok {
+		// Ghost users are enabled - send message through ghost user's own client
+		return h.sendMessageViaGhostUser(xmppUserManager, msg, roomJID)
+	}
+
+	// Regular user manager - send message through bridge client
+	return h.sendMessageViaBridgeUser(msg, roomJID)
+}
+
+// sendMessageViaGhostUser sends a message using a ghost user's individual XMPP client
+func (h *xmppMessageHandler) sendMessageViaGhostUser(xmppUserManager *UserManager, msg *pluginModel.BridgeMessage, roomJID string) error {
+	// Validate source user ID for ghost user messaging
+	if msg.SourceUserID == "" {
+		return fmt.Errorf("cannot send message with ghost users: source user ID is empty")
+	}
+
+	// Get or create the ghost user
+	bridgeUser, err := xmppUserManager.GetOrCreateUser(msg.SourceUserID, msg.SourceUserName)
 	if err != nil {
-		return fmt.Errorf("failed to send message to XMPP room: %w", err)
+		h.logger.LogWarn("Failed to get/create ghost user, falling back to bridge user", "source_user_id", msg.SourceUserID, "error", err)
+		return h.sendMessageViaBridgeUser(msg, roomJID)
 	}
 
-	h.logger.LogDebug("Message sent to XMPP room",
-		"channel_id", msg.SourceChannelID,
+	// Cast to XMPPUser to access XMPP-specific methods
+	xmppUser, ok := bridgeUser.(*User)
+	if !ok {
+		return fmt.Errorf("expected XMPPUser, got %T", bridgeUser)
+	}
+
+	// Check if the ghost user is connected
+	if !xmppUser.IsConnected() {
+		h.logger.LogDebug("Ghost user not connected, attempting to connect", "user_id", msg.SourceUserID, "ghost_jid", xmppUser.GetJID())
+		// TODO: Start the user if not started - this will be handled in the user manager fix
+		h.logger.LogWarn("Ghost user not connected, falling back to bridge user", "user_id", msg.SourceUserID, "ghost_jid", xmppUser.GetJID())
+		return h.sendMessageViaBridgeUser(msg, roomJID)
+	}
+
+	// Format message content for ghost user (no prefix needed since it's sent as the actual user)
+	content := msg.Content
+
+	// Send message through the ghost user's own XMPP client
+	err = xmppUser.SendMessageToChannel(roomJID, content)
+	if err != nil {
+		h.logger.LogWarn("Failed to send message via ghost user, falling back to bridge user", "user_id", msg.SourceUserID, "ghost_jid", xmppUser.GetJID(), "error", err)
+		return h.sendMessageViaBridgeUser(msg, roomJID)
+	}
+
+	h.logger.LogDebug("Message sent via ghost user",
+		"source_user_id", msg.SourceUserID,
+		"ghost_jid", xmppUser.GetJID(),
 		"room_jid", roomJID,
 		"content_length", len(content))
 
 	return nil
 }
 
-// formatMessageContent formats the message content for XMPP
-func (h *xmppMessageHandler) formatMessageContent(msg *pluginModel.BridgeMessage) string {
-	// For messages from other bridges, prefix with the user name
+// sendMessageViaBridgeUser sends a message using the bridge user's XMPP client
+func (h *xmppMessageHandler) sendMessageViaBridgeUser(msg *pluginModel.BridgeMessage, roomJID string) error {
+	// Validate bridge client is available
+	if h.bridge.bridgeClient == nil {
+		return fmt.Errorf("XMPP bridge client not initialized")
+	}
+
+	if !h.bridge.connected.Load() {
+		return fmt.Errorf("not connected to XMPP server")
+	}
+
+	// Get bridge user JID
+	h.bridge.configMu.RLock()
+	bridgeJID := h.bridge.config.XMPPUsername
+	h.bridge.configMu.RUnlock()
+
+	// Format message content for bridge user (prefix with original username)
+	content := h.formatMessageContentForBridgeUser(msg)
+
+	// Create XMPP message request
+	req := xmppClient.MessageRequest{
+		RoomJID:      roomJID,
+		GhostUserJID: bridgeJID,
+		Message:      content,
+	}
+
+	// Send the message through bridge client
+	_, err := h.bridge.bridgeClient.SendMessage(&req)
+	if err != nil {
+		return fmt.Errorf("failed to send message to XMPP room via bridge user: %w", err)
+	}
+
+	h.logger.LogDebug("Message sent via bridge user",
+		"bridge_jid", bridgeJID,
+		"room_jid", roomJID,
+		"content_length", len(content))
+
+	return nil
+}
+
+// formatMessageContentForBridgeUser formats message content for bridge user (with username prefix)
+func (h *xmppMessageHandler) formatMessageContentForBridgeUser(msg *pluginModel.BridgeMessage) string {
+	// Prefix with the original user name for bridge user messages
 	if msg.SourceUserName != "" {
 		return fmt.Sprintf("<%s> %s", msg.SourceUserName, msg.Content)
 	}
