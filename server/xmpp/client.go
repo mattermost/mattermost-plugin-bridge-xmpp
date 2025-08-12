@@ -182,11 +182,6 @@ func (c *Client) GetInBandRegistration() (*InBandRegistration, error) {
 	return c.XEPFeatures.InBandRegistration, nil
 }
 
-// DetectServerCapabilities discovers which XEPs are supported by the server (public method)
-func (c *Client) DetectServerCapabilities() error {
-	return c.detectServerCapabilities()
-}
-
 // detectServerCapabilities discovers which XEPs are supported by the server
 func (c *Client) detectServerCapabilities() error {
 	if c.session == nil {
@@ -360,6 +355,13 @@ func (c *Client) Connect() error {
 			return fmt.Errorf("failed to start session serving")
 		}
 		c.logger.LogInfo("XMPP client connected successfully", "jid", c.jidAddr.String())
+
+		// Automatically detect server capabilities after successful connection
+		if err := c.detectServerCapabilities(); err != nil {
+			c.logger.LogError("Failed to detect server capabilities automatically", "error", err)
+			// Don't fail the connection for capability detection issues
+		}
+
 		return nil
 	case <-time.After(10 * time.Second):
 		return fmt.Errorf("timeout waiting for session to be ready")

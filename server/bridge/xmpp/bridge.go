@@ -134,20 +134,6 @@ func (b *xmppBridge) createUserManager(cfg *config.Configuration, bridgeID strin
 	return NewXMPPUserManager(bridgeID, log, store, b.api, cfg, b.bridgeClient)
 }
 
-// waitForCapabilityDetection waits for server capability detection to complete
-func (b *xmppBridge) waitForCapabilityDetection() error {
-	if b.bridgeClient == nil {
-		return fmt.Errorf("bridge client not available")
-	}
-
-	// Trigger capability detection synchronously
-	if err := b.bridgeClient.DetectServerCapabilities(); err != nil {
-		return fmt.Errorf("failed to detect server capabilities: %w", err)
-	}
-
-	return nil
-}
-
 // checkXEP0077Support checks if the XMPP server supports XEP-0077 In-Band Registration
 func (b *xmppBridge) checkXEP0077Support() (bool, error) {
 	if b.bridgeClient == nil {
@@ -235,11 +221,6 @@ func (b *xmppBridge) Start() error {
 	// Connect to XMPP server
 	if err := b.connectToXMPP(); err != nil {
 		return fmt.Errorf("failed to connect to XMPP server: %w", err)
-	}
-
-	// Wait for server capability detection to complete before creating user manager
-	if err := b.waitForCapabilityDetection(); err != nil {
-		return fmt.Errorf("failed to detect server capabilities: %w", err)
 	}
 
 	// Initialize proper user manager now that we're connected and server capabilities are detected
