@@ -17,9 +17,6 @@
     },
     "executable": ""
   },
-  "webapp": {
-    "bundle_path": "webapp/dist/main.js"
-  },
   "settings_schema": {
     "header": "Configure the XMPP bridge connection settings below.",
     "footer": "For more information about setting up the XMPP bridge, see the [documentation](https://github.com/mattermost/mattermost-plugin-bridge-xmpp/blob/main/README.md).",
