@@ -62,12 +62,42 @@
         "secret": false
       },
       {
-        "key": "XMPPUsernamePrefix",
-        "display_name": "XMPP Username Prefix",
+        "key": "EnableXMPPGhostUsers",
+        "display_name": "Enable XMPP Ghost Users",
+        "type": "bool",
+        "help_text": "When enabled, individual XMPP accounts will be created for each Mattermost user using XEP-0077 In-Band Registration. If disabled or unsupported, the bridge user will be used for all communications.",
+        "placeholder": "",
+        "default": false,
+        "hosting": "",
+        "secret": false
+      },
+      {
+        "key": "XMPPGhostUserPrefix",
+        "display_name": "XMPP Ghost User Prefix",
         "type": "text",
-        "help_text": "Prefix for XMPP users in Mattermost (e.g., 'xmpp' creates usernames like 'xmpp:user@domain')",
-        "placeholder": "xmpp",
-        "default": "xmpp",
+        "help_text": "Prefix for ghost user accounts created on the XMPP server (e.g., 'mm_' creates users like 'mm_john@xmpp.example.com'). Required when ghost users are enabled.",
+        "placeholder": "mm_",
+        "default": null,
+        "hosting": "",
+        "secret": false
+      },
+      {
+        "key": "XMPPGhostUserDomain",
+        "display_name": "XMPP Ghost User Domain",
+        "type": "text",
+        "help_text": "Domain for ghost user accounts on the XMPP server. If not specified, uses the domain from the XMPP Server URL.",
+        "placeholder": "xmpp.example.com",
+        "default": null,
+        "hosting": "",
+        "secret": false
+      },
+      {
+        "key": "XMPPGhostUserCleanup",
+        "display_name": "Enable Ghost User Cleanup",
+        "type": "bool",
+        "help_text": "When enabled, ghost user accounts will be automatically removed from the XMPP server when Mattermost users are deleted. Disable to preserve accounts.",
+        "placeholder": "",
+        "default": true,
         "hosting": "",
         "secret": false
       },
