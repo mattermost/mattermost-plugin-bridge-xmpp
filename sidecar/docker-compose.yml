@@ -1,3 +1,5 @@
+name: xmpp-bridge-openfire
+
 services:
   openfire:
     image: nasqueron/openfire:4.7.1

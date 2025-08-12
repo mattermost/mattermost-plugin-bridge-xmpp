@@ -47,18 +47,18 @@ Open your web browser and go to: http://localhost:9090
 ### 2. Complete Setup Wizard
 
 1. **Language Selection**: Choose your preferred language
-2. **Server Settings**: 
-   - Server Domain: `localhost` (default is fine)
+2. **Server Settings**:
+   - Server Domain and Server Host Name (FQDN): `localhost`
    - Keep other defaults
-3. **Database Settings**: 
+3. **Database Settings**:
    - Choose "Embedded Database" for development
    - This creates a local database that persists in Docker volumes
-4. **Profile Settings**: 
+4. **Profile Settings**:
    - Choose "Default" (no LDAP needed for development)
 5. **Administrator Account**:
-   - Username: `admin`
-   - Password: `admin` (for development consistency)
    - Email: `admin@localhost`
+   - Password: `admin` (for development consistency)
+6. When finishing setup the server will be non-responsive for a minute
 
 ### 3. Create Test User
 
@@ -83,13 +83,8 @@ For testing Multi-User Chat functionality, create a test room:
    - **Room ID**: `test1`
    - **Room Name**: `Test Room 1`
    - **Description**: `Test room for XMPP bridge development`
-   - **Subject**: `Development Test Room`
-3. Configure room settings:
-   - **Room Type**: Public (searchable and accessible)
-   - **Persistent**: Yes (room survives server restarts)
-   - **Max occupants**: 50 (or leave default)
-   - **Enable**: Yes
-4. Click **Create Room**
+3. Leave rest as defaults.
+4. Click **Save changes**
 
 The room will be accessible as `test1@conference.localhost` for testing MUC operations.
 
