@@ -11,13 +11,9 @@ on:
 
 permissions:
   contents: read
-
-env:
-  IS_CI: true
+  id-token: write
 
 jobs:
   plugin-ci:
-    uses: mattermost/actions-workflows/.github/workflows/plugin-ci.yml
+    uses: mattermost/actions-workflows/.github/workflows/plugin-ci.yml@main
     secrets: inherit
-    with:
-      mage-version: v1.15.0

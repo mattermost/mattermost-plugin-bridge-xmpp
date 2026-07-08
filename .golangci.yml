@@ -51,6 +51,10 @@ linters:
       - std-error-handling
       - common-false-positives
 
+    paths:
+      - build/manifest
+      - build/pluginctl
+
     rules:
       - path: '_test\.go'
         linters:

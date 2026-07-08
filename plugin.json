@@ -123,10 +123,5 @@
       }
     ],
     "sections": null
-  },
-  "props": {
-    "pluginctl": {
-      "version": "v0.1.4"
-    }
   }
 }
