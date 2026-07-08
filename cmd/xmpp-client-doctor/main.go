@@ -482,8 +482,8 @@ func testXEP0077(client *xmpp.Client, config *Config, logger *StructuredLogger) 
 	}
 
 	// Step 2: Connect ghost client
-	if err := ghostClient.Connect(); err != nil {
-		return fmt.Errorf("failed to connect ghost user: %w", err)
+	if connErr := ghostClient.Connect(); connErr != nil {
+		return fmt.Errorf("failed to connect ghost user: %w", connErr)
 	}
 	logger.LogInfo("Ghost user connected")
 
@@ -497,8 +497,8 @@ func testXEP0077(client *xmpp.Client, config *Config, logger *StructuredLogger) 
 	}
 
 	// Step 4: Join test room
-	if err := ghostClient.JoinRoom(config.TestRoom); err != nil {
-		return fmt.Errorf("failed to join room: %w", err)
+	if joinErr := ghostClient.JoinRoom(config.TestRoom); joinErr != nil {
+		return fmt.Errorf("failed to join room: %w", joinErr)
 	}
 	logger.LogInfo("Ghost user joined room", "room", config.TestRoom)
 
@@ -510,8 +510,8 @@ func testXEP0077(client *xmpp.Client, config *Config, logger *StructuredLogger) 
 		Message:      testMessage,
 	}
 
-	if _, err := ghostClient.SendMessage(&messageReq); err != nil {
-		return fmt.Errorf("failed to send message: %w", err)
+	if _, sendErr := ghostClient.SendMessage(&messageReq); sendErr != nil {
+		return fmt.Errorf("failed to send message: %w", sendErr)
 	}
 	logger.LogInfo("Ghost user sent message", "message", testMessage)
 

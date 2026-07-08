@@ -89,7 +89,8 @@ func (h *mattermostMessageHandler) postMessageToMattermost(msg *pluginModel.Brid
 	}
 
 	if err := h.bridge.api.InviteRemoteToChannel(channelID, msg.SourceRemoteID, remoteUserID, true); err != nil {
-		h.logger.LogError("Failed to invite remote user to channel",
+		h.logger.LogError(
+			"Failed to invite remote user to channel",
 			"channel_id", msg.SourceChannelID,
 			"remote_user_id", remoteUserID,
 			"source_bridge", msg.SourceBridge,
@@ -104,7 +105,7 @@ func (h *mattermostMessageHandler) postMessageToMattermost(msg *pluginModel.Brid
 		UserId:    remoteUserID,
 		Message:   msg.Content,
 		Type:      mmModel.PostTypeDefault,
-		Props: map[string]interface{}{
+		Props: map[string]any{
 			"from_bridge":       msg.SourceBridge,
 			"bridge_message_id": msg.MessageID,
 			"bridge_timestamp":  msg.Timestamp.Unix(),

@@ -222,7 +222,7 @@ func (r *InBandRegistration) RegisterAccount(serverJID jid.JID, request *Registr
 			Error:   fmt.Sprintf("failed to encode registration query: %v", err),
 		}, nil
 	}
-	encoder.Flush()
+	_ = encoder.Flush()
 
 	// Create TokenReader from the encoded query by using xml.NewDecoder
 	payloadReader := xml.NewDecoder(bytes.NewReader(queryBuf.Bytes()))
@@ -239,7 +239,7 @@ func (r *InBandRegistration) RegisterAccount(serverJID jid.JID, request *Registr
 	// Try to unmarshal the response as an error IQ first
 	responseIQ, err := stanza.UnmarshalIQError(response, xml.StartElement{})
 	registrationResponse := &InBandRegistrationResponse{}
-	response.Close()
+	_ = response.Close()
 
 	if err != nil {
 		// If we can't parse the response, treat it as a failure and log the parse error
@@ -359,7 +359,7 @@ func (r *InBandRegistration) CancelRegistration(serverJID jid.JID, request *Canc
 			Error:   fmt.Sprintf("failed to encode cancellation query: %v", err),
 		}, nil
 	}
-	encoder.Flush()
+	_ = encoder.Flush()
 
 	// Create TokenReader from the encoded query
 	payloadReader := xml.NewDecoder(bytes.NewReader(queryBuf.Bytes()))
@@ -376,7 +376,7 @@ func (r *InBandRegistration) CancelRegistration(serverJID jid.JID, request *Canc
 	// Try to unmarshal the response as an error IQ first
 	responseIQ, err := stanza.UnmarshalIQError(response, xml.StartElement{})
 	cancellationResponse := &InBandRegistrationResponse{}
-	response.Close()
+	_ = response.Close()
 
 	if err != nil {
 		// If we can't parse the response, treat it as a failure and log the parse error

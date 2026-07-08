@@ -240,11 +240,11 @@ func (mb *messageBus) deliverMessage(ch chan *model.DirectionalMessage, msg *mod
 }
 
 // GetStats returns statistics about the message bus
-func (mb *messageBus) GetStats() map[string]interface{} {
+func (mb *messageBus) GetStats() map[string]any {
 	mb.subscribersMu.RLock()
 	defer mb.subscribersMu.RUnlock()
 
-	stats := map[string]interface{}{
+	stats := map[string]any{
 		"started":          mb.started,
 		"subscriber_count": len(mb.subscribers),
 		"buffer_size":      DefaultMessageBufferSize,
