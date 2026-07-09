@@ -19,7 +19,6 @@ type Handler struct {
 
 type Command interface {
 	Handle(args *model.CommandArgs) (*model.CommandResponse, error)
-	executeXMPPBridgeCommand(args *model.CommandArgs) *model.CommandResponse
 }
 
 const xmppBridgeCommandTrigger = "xmppbridge"

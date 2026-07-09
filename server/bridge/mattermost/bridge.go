@@ -3,6 +3,7 @@ package mattermost
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 	"sync/atomic"
 
@@ -147,9 +148,7 @@ func (b *mattermostBridge) loadChannelMappings() error {
 
 	// Update local cache
 	b.mappingsMu.Lock()
-	for channelID, roomID := range mappings {
-		b.channelMappings[channelID] = roomID
-	}
+	maps.Copy(b.channelMappings, mappings)
 	b.mappingsMu.Unlock()
 
 	return nil

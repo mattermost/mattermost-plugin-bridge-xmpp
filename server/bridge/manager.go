@@ -442,9 +442,7 @@ func (m *BridgeManager) startBridgeMessageHandler(bridgeID string, bridge model.
 	messageChannel := m.messageBus.Subscribe(bridgeID)
 
 	// Start message routing goroutine
-	m.routingWg.Add(1)
-	go func() {
-		defer m.routingWg.Done()
+	m.routingWg.Go(func() {
 		defer m.logger.LogDebug("Message handler stopped for bridge", "bridge_id", bridgeID)
 
 		for {
@@ -467,12 +465,10 @@ func (m *BridgeManager) startBridgeMessageHandler(bridgeID string, bridge model.
 				return
 			}
 		}
-	}()
+	})
 
 	// Listen to bridge's outgoing messages
-	m.routingWg.Add(1)
-	go func() {
-		defer m.routingWg.Done()
+	m.routingWg.Go(func() {
 		defer m.logger.LogDebug("Bridge message listener stopped", "bridge_id", bridgeID)
 
 		bridgeMessageChannel := bridge.GetMessageChannel()
@@ -496,7 +492,7 @@ func (m *BridgeManager) startBridgeMessageHandler(bridgeID string, bridge model.
 				return
 			}
 		}
-	}()
+	})
 }
 
 // handleBridgeMessage processes an incoming message for a specific bridge

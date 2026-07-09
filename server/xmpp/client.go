@@ -341,7 +341,7 @@ func (c *Client) Connect() error {
 		xmpp.BindResource(),
 	)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return fmt.Errorf("failed to establish XMPP session: %w", err)
 	}
 
