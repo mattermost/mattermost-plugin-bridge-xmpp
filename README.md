@@ -13,6 +13,14 @@ This plugin provides bidirectional message synchronization between Mattermost an
 - Ghost user management for cross-platform user representation on the XMPP server with connection lifecycle management (**XEP-0077 only**)
 - Comprehensive XMPP client with SASL Plain authentication
 
+## Supported XEPs
+
+| XEP | Name | Usage |
+|-----|------|--------|
+| [XEP-0030](https://xmpp.org/extensions/xep-0030.html) | Service Discovery | Server capability detection and MUC room existence checks (`disco#info`) |
+| [XEP-0045](https://xmpp.org/extensions/xep-0045.html) | Multi-User Chat | Group messaging between Mattermost channels and XMPP rooms |
+| [XEP-0077](https://xmpp.org/extensions/xep-0077.html) | In-Band Registration | Ghost user account creation and management |
+
 To learn more about plugins, see [our plugin documentation](https://developers.mattermost.com/extend/plugins/).
 
 This template requires node v16 and npm v8. You can download and install nvm to manage your node versions by following the instructions [here](https://github.com/nvm-sh/nvm). Once you've setup the project simply run `nvm i` within the root folder to use the suggested version of node.
