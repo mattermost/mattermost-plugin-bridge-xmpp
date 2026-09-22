@@ -174,7 +174,7 @@ docker-compose up -d
 
 The development server runs Openfire XMPP server with:
 - XMPP client connections on port 5222
-- Admin console on http://localhost:9090
+- Admin console on http://localhost:19090
 - Default test credentials: `testuser@localhost` / `testpass`
 
 ### Deploying with credentials

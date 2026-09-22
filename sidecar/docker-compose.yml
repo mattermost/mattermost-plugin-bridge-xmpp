@@ -2,11 +2,11 @@ name: xmpp-bridge-openfire
 
 services:
   openfire:
-    image: nasqueron/openfire:4.7.1
+    image: ghcr.io/igniterealtime/openfire:v5.1.2
     container_name: openfire-dev
     restart: unless-stopped
     ports:
-      - "9090:9090" # Admin console (HTTP)
+      - "19090:9090" # Admin console (HTTP)
       - "9091:9091" # Admin console (HTTPS)
       - "5222:5222" # XMPP client connections
       - "5223:5223" # XMPP client connections (SSL)
