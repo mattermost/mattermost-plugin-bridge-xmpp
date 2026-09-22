@@ -15,6 +15,21 @@ services:
     volumes:
       - openfire_data:/var/lib/openfire
 
+  converse:
+    image: nginx:alpine
+    container_name: converse-dev
+    restart: unless-stopped
+    depends_on:
+      - openfire
+    ports:
+      - "8080:80" # Web XMPP client
+    volumes:
+      # Converse.js itself is loaded from cdn.conversejs.org, so this container only
+      # serves the init page and proxies /xmpp-websocket to Openfire.
+      - ./converse/index.html:/usr/share/nginx/html/index.html:ro
+      - ./converse/sw.js:/usr/share/nginx/html/sw.js:ro
+      - ./converse/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
 volumes:
   openfire_data:
     driver: local

@@ -1,6 +1,6 @@
 # Development XMPP Server
 
-This folder contains a `docker-compose.yml` file for development purposes. It sets up a local XMPP server (Openfire) plus a browser-based XMPP client ([xmpp-web](https://github.com/nioc/xmpp-web)) to use while developing the Mattermost XMPP bridge plugin.
+This folder contains a `docker-compose.yml` file for development purposes. It sets up a local XMPP server (Openfire) plus a browser-based XMPP client ([Converse.js](https://conversejs.org/)) to use while developing the Mattermost XMPP bridge plugin.
 
 ## Quick Start
 
@@ -135,9 +135,11 @@ This will test joining the `test1@conference.localhost` room, waiting 5 seconds,
 
 ## Connecting as an XMPP User
 
-The `xmpp-web` service runs a prebuilt web XMPP client. It reaches Openfire's WebSocket
-endpoint through its own nginx proxy (`/xmpp-websocket` → `http://openfire:7070/ws/`), so
-Openfire needs no extra published ports:
+The `converse` service is an `nginx:alpine` container serving `converse/index.html`, which
+loads Converse.js from `cdn.conversejs.org` (so the container needs no build step, but the
+page does need internet access). The same nginx proxies `/xmpp-websocket` to
+`http://openfire:7070/ws/`, keeping the browser on one origin, so Openfire needs no extra
+published ports and no CORS setup:
 
 1. Open [http://localhost:8080](http://localhost:8080)
 2. **JID**: `test` (the `localhost` domain is prefilled), **Password**: `testpass`
@@ -276,8 +278,17 @@ go run cmd/xmpp-client-doctor/main.go \
 - The server uses self-signed certificates, so the doctor tool defaults to `-insecure-skip-verify=true`
 - All data persists between container restarts unless you run `make devserver_clean`
 - The PostgreSQL and Adminer services are included but optional (you can use embedded database)
-- The web client is configured entirely through `environment:` vars on the `xmpp-web`
-service; it renders them into `/local.js`, which you can curl to check the live config
-- `xmpp-web` returns `502` on the WebSocket path until Openfire finishes booting
+- The web client is configured in `converse/index.html` via the `converse.initialize({...})`
+call; edit it and reload the page, no container rebuild needed
+- `discover_connection_methods: false` is required there: Openfire publishes no XEP-0156
+records, and without it Converse probes for them and ignores `websocket_url`
+- Converse 14 publishes an ES module, so `index.html` must use `<script type="module">`
+and `import converse from ...`; a plain `<script src>` fails with `Cannot use
+'import.meta' outside a module` followed by `converse is not defined`
+- Pin the Converse version in the two `cdn.conversejs.org` URLs in `converse/index.html`
+- `converse/sw.js` unregisters the service worker left behind by the old `xmpp-web`
+client; keep it, and do not add an SPA `try_files` fallback to `index.html` or requests
+for missing `.js` files will be answered with HTML
+- The proxy returns `502` on the WebSocket path until Openfire finishes booting
 - The server takes \~30 seconds to fully start up after `docker compose up`
 
