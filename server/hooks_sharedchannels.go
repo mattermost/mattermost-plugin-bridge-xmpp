@@ -44,12 +44,53 @@ func (p *Plugin) OnSharedChannelsPing(remoteCluster *model.RemoteCluster) bool {
 
 	// Perform active ping test on the XMPP bridge
 	if err := bridge.Ping(); err != nil {
-		p.logger.LogError("XMPP bridge ping failed", "error", err, "remote_cluster_id", remoteClusterID)
+		if p.notePingFailure() {
+			p.logger.LogWarn("XMPP bridge ping failed, still inside the grace period",
+				"error", err, "remote_cluster_id", remoteClusterID)
+			return true
+		}
+		p.logger.LogError("XMPP bridge ping failing beyond the grace period",
+			"error", err, "remote_cluster_id", remoteClusterID)
 		return false
 	}
+	p.notePingSuccess()
 
 	p.logger.LogDebug("Shared channels ping successful - XMPP bridge is healthy", "remote_cluster_id", remoteClusterID)
 	return true
+}
+
+// pingFailureGracePeriod is how long the XMPP connection may be failing before the
+// bridge reports itself unhealthy.
+//
+// Unlike an HTTP-based bridge, the XMPP client holds a long-lived session that the
+// plugin itself tears down and rebuilds on every configuration change. Reporting
+// unhealthy during those few seconds marks the remote offline, and a channel mapped
+// while the remote is offline is stored as a pending invite that never syncs and is
+// never retried. Kept well inside the server's own five minute
+// RemoteOfflineAfterMillis so a genuine outage still surfaces.
+//
+// ponytail: one global window for the whole plugin; track it per remote if the plugin
+// ever registers more than one XMPP server.
+const pingFailureGracePeriod = 2 * time.Minute
+
+// notePingFailure records a failed health check and reports whether the failure is
+// still recent enough to keep claiming the bridge is healthy.
+func (p *Plugin) notePingFailure() bool {
+	p.pingMu.Lock()
+	defer p.pingMu.Unlock()
+
+	if p.pingFailingSince.IsZero() {
+		p.pingFailingSince = time.Now()
+	}
+	return time.Since(p.pingFailingSince) < pingFailureGracePeriod
+}
+
+// notePingSuccess clears any recorded failure streak.
+func (p *Plugin) notePingSuccess() {
+	p.pingMu.Lock()
+	defer p.pingMu.Unlock()
+
+	p.pingFailingSince = time.Time{}
 }
 
 // OnSharedChannelsSyncMsg processes sync messages from Mattermost shared channels and routes them to XMPP

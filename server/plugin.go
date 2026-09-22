@@ -56,6 +56,11 @@ type Plugin struct {
 
 	// Bridge manager for managing all bridge instances
 	bridgeManager pluginModel.BridgeManager
+
+	// pingFailingSince is when the XMPP connection first failed a shared channels
+	// health check, zero while healthy. Guarded by pingMu.
+	pingMu           sync.Mutex
+	pingFailingSince time.Time
 }
 
 // OnActivate is invoked when the plugin is activated. If an error is returned, the plugin will be deactivated.
