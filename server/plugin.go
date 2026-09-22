@@ -131,9 +131,10 @@ func (p *Plugin) OnDeactivate() error {
 		}
 	}
 
-	if err := p.API.UnregisterPluginForSharedChannels(manifest.Id); err != nil {
-		p.API.LogError("Failed to unregister plugin for shared channels", "err", err)
-	}
+	// Deliberately no UnregisterPluginForSharedChannels here. It deletes the remote
+	// and every SharedChannelRemote hanging off it, which is uninstall behaviour, and
+	// deactivation is an upgrade or a restart. Wiping it left mapped channels with no
+	// remote to sync to after every redeploy.
 
 	return nil
 }
@@ -156,6 +157,7 @@ func (p *Plugin) initBridges(cfg *config.Configuration) error {
 		cfg,
 		"xmpp",
 		p.remoteID,
+		p.botUserID,
 	)
 
 	if err := p.bridgeManager.RegisterBridge("xmpp", xmppBridge); err != nil {

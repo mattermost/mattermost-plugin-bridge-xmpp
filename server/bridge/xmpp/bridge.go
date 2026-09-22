@@ -34,6 +34,7 @@ type xmppBridge struct {
 	userManager  pluginModel.BridgeUserManager
 	bridgeID     string // Bridge identifier used for registration
 	remoteID     string // Remote ID for shared channels
+	botUserID    string // Bot user credited as the creator of shared channel invites
 
 	// Message handling
 	messageHandler   *xmppMessageHandler
@@ -55,7 +56,7 @@ type xmppBridge struct {
 }
 
 // NewBridge creates a new XMPP bridge
-func NewBridge(log logger.Logger, api plugin.API, store kvstore.KVStore, cfg *config.Configuration, bridgeID, remoteID string) pluginModel.Bridge {
+func NewBridge(log logger.Logger, api plugin.API, store kvstore.KVStore, cfg *config.Configuration, bridgeID, remoteID, botUserID string) pluginModel.Bridge {
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &xmppBridge{
 		logger:           log,
@@ -68,6 +69,7 @@ func NewBridge(log logger.Logger, api plugin.API, store kvstore.KVStore, cfg *co
 		incomingMessages: make(chan *pluginModel.DirectionalMessage, defaultMessageBufferSize),
 		bridgeID:         bridgeID,
 		remoteID:         remoteID,
+		botUserID:        botUserID,
 	}
 
 	// Initialize handlers after bridge is created
@@ -318,9 +320,31 @@ func (b *xmppBridge) loadAndJoinMappedChannels() error {
 		if err := b.joinXMPPRoom(channelID, roomJID); err != nil {
 			b.logger.LogWarn("Failed to join room", "channel_id", channelID, "room_jid", roomJID, "error", err)
 		}
+		b.ensureRemoteInvited(channelID)
 	}
 
 	return nil
+}
+
+// ensureRemoteInvited re-invites this bridge's remote to a mapped channel.
+//
+// Mappings live in the KV store and outlive the remote, so a channel can be mapped
+// while Mattermost has no SharedChannelRemote for it, in which case nothing syncs
+// until something invites the remote again. The invite is skipped server-side when
+// the remote is already invited, so this is a no-op for healthy channels and does
+// not disturb their sync cursors.
+func (b *xmppBridge) ensureRemoteInvited(channelID string) {
+	if b.remoteID == "" || b.botUserID == "" {
+		return
+	}
+
+	if err := b.api.InviteRemoteToChannel(channelID, b.remoteID, b.botUserID, false); err != nil {
+		b.logger.LogWarn("Failed to ensure bridge remote is invited to mapped channel",
+			"channel_id", channelID, "remote_id", b.remoteID, "error", err)
+		return
+	}
+
+	b.logger.LogDebug("Bridge remote invited to mapped channel", "channel_id", channelID, "remote_id", b.remoteID)
 }
 
 // joinXMPPRoom joins an XMPP room and updates the local cache
