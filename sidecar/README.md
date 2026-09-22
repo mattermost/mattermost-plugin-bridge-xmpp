@@ -1,6 +1,6 @@
 # Development XMPP Server
 
-This folder contains a `docker-compose.yml` file for development purposes. It sets up a local XMPP server (Openfire) to use while developing the Mattermost XMPP bridge plugin.
+This folder contains a `docker-compose.yml` file for development purposes. It sets up a local XMPP server (Openfire) plus a browser-based XMPP client ([xmpp-web](https://github.com/nioc/xmpp-web)) to use while developing the Mattermost XMPP bridge plugin.
 
 ## Quick Start
 
@@ -42,13 +42,14 @@ After starting the server for the first time, you need to complete the Openfire 
 
 ### 1. Access Admin Console
 
-Open your web browser and go to: http://localhost:9090
+Open your web browser and go to: [http://localhost:19090](http://localhost:19090)
 
 ### 2. Complete Setup Wizard
 
 1. **Language Selection**: Choose your preferred language
 2. **Server Settings**:
    - Server Domain and Server Host Name (FQDN): `localhost`
+   - **Uncheck "Restrict admin console to localhost"**. It is checked by default and binds the console to `127.0.0.1` *inside* the container, making [http://localhost:19090](http://localhost:19090) unreachable from the host
    - Keep other defaults
 3. **Database Settings**:
    - Choose "Embedded Database" for development
@@ -60,19 +61,42 @@ Open your web browser and go to: http://localhost:9090
    - Password: `admin` (for development consistency)
 6. When finishing setup the server will be non-responsive for a minute
 
-### 3. Create Test User
+### 3. Create the bridge and test users
 
-After completing the setup wizard:
+You need **two separate accounts**: one for the bridge itself, and one to act as a
+human XMPP participant. Do not use a single account for both; see
+[Why two accounts](#why-two-accounts) below.
 
-1. Log in to the admin console with `admin` / `admin`
-2. Go to **Users/Groups** → **Create New User**
-3. Fill in the user details:
-   - **Username**: `testuser`
-   - **Password**: `testpass`
-   - **Confirm Password**: `testpass`
-   - **Name**: `Test User`
-   - **Email**: `testuser@localhost`
-4. Click **Create User**
+After completing the setup wizard, log in to the admin console with `admin` / `admin`,
+then for each user go to **Users/Groups** → **Create New User** and click **Create User**:
+
+
+| Field                | Bridge account     | Human test account |
+| -------------------- | ------------------ | ------------------ |
+| **Username**         | `bridge`           | `test`             |
+| **Password**         | `bridgepass`       | `testpass`         |
+| **Confirm Password** | `bridgepass`       | `testpass`         |
+| **Name**             | `Bridge Bot`       | `Test User`        |
+| **Email**            | `bridge@localhost` | `test@localhost`   |
+
+
+`bridge@localhost` goes in the plugin settings. `test@localhost` is the one you log
+into the web XMPP client with.
+
+#### Why two accounts
+
+The bridge joins each MUC room using the localpart of its own JID as its nickname, so
+`bridge@localhost` appears in rooms as `bridge`. Incoming messages are matched against
+that nickname to drop the bridge's own echo and avoid a message loop.
+
+If you sign in to the XMPP client with the *same* account the plugin uses, your session
+joins under the same nickname, and **every message you send is silently discarded as the
+bridge's own echo**. It never reaches Mattermost, and nothing is logged. Openfire
+permits this because both sessions share one bare JID, so you do not even get a nickname
+conflict to warn you.
+
+For the same reason, do not give a human account a username starting with the ghost user
+prefix (`mm_` by default), because those nicknames are also treated as bridge-owned.
 
 ### 4. Create Test MUC Room
 
@@ -109,9 +133,24 @@ go run cmd/xmpp-client-doctor/main.go --test-muc
 
 This will test joining the `test1@conference.localhost` room, waiting 5 seconds, and then leaving.
 
+## Connecting as an XMPP User
+
+The `xmpp-web` service runs a prebuilt web XMPP client. It reaches Openfire's WebSocket
+endpoint through its own nginx proxy (`/xmpp-websocket` → `http://openfire:7070/ws/`), so
+Openfire needs no extra published ports:
+
+1. Open [http://localhost:8080](http://localhost:8080)
+2. **JID**: `test` (the `localhost` domain is prefilled), **Password**: `testpass`
+ (use the human test account here, never the bridge account)
+3. Join the test room as `test1@conference.localhost`
+
+Useful for watching messages arrive from the bridge in real time, and for sending
+messages to a Mattermost-bridged channel as a real XMPP user.
+
 ## Server Details
 
-- **Admin Console**: http://localhost:9090
+- **Admin Console**: [http://localhost:19090](http://localhost:19090)
+- **Web XMPP Client**: [http://localhost:8080](http://localhost:8080)
 - **XMPP Server**: localhost:5222 (client connections)
 - **XMPP SSL Server**: localhost:5223 (SSL client connections)
 - **XMPP Server-to-Server**: localhost:5269
@@ -121,21 +160,92 @@ This will test joining the `test1@conference.localhost` room, waiting 5 seconds,
 
 After setup, use these credentials for testing:
 
-- **Admin User**: `admin` / `admin`
-- **Test User**: `testuser@localhost` / `testpass`
+- **Admin User**: `admin` / `admin` (admin console, and the doctor tool's default)
+- **Bridge Account**: `bridge@localhost` / `bridgepass` (plugin settings only)
+- **Human Test User**: `test@localhost` / `testpass` (web XMPP client only)
+
+## Connecting the bridge plugin to the XMPP server
+
+`XMPP Username` / `XMPP Password` are the **bridge bot** account. That client connects, joins mapped MUC rooms, receives XMPP traffic, registers ghost users (when enabled), and (when ghost users are off) sends Mattermost messages into XMPP as itself. Use `bridge@localhost`, not Openfire `admin`, and not the `test@localhost` account you sign in to the XMPP client with.
+
+### 1. Plugin settings (required)
+
+After Openfire is set up and the plugin is deployed to Mattermost:
+
+1. Go to **System Console → Plugins → Mattermost Bridge for XMPP**
+2. Set:
+   - **XMPP Server URL**: `localhost:5222`
+   - **XMPP Username**: `bridge@localhost`
+   - **XMPP Password**: `bridgepass`
+   - **Skip TLS Certificate Verification**: enabled (self-signed certs)
+   - **Enable Message Synchronization**: enabled
+3. Save and ensure the plugin is enabled
+
+### 2. Ghost users (recommended for local development)
+
+Ghost users make each Mattermost user appear as a real XMPP account (`mm_{userID}@localhost`) instead of everything posting as the bridge bot.
+
+**Openfire (enable XEP-0077):**
+
+> This should be enabled by default, but in order to use ghost users we need to make sure.
+
+1. Open [http://localhost:19090](http://localhost:19090) and log in as `admin` / `admin`
+2. Go to **Server → Server Settings → Registration &amp; Login**
+3. Enable **Inband Account Registration** (and save)
+4. Verify with the doctor (registers/cancels a temporary ghost):
+
+```
+make devserver_doctor
+```
+
+**Plugin:**
+
+Still keep `bridge@localhost` / `bridgepass` as the bridge bot, then set:
+
+- **Enable XMPP Ghost Users**: enabled
+- **XMPP Ghost User Prefix**: `mm_`
+- **XMPP Ghost User Domain**: leave empty (defaults to `localhost` from the bridge JID)
+- **Enable Ghost User Cleanup**: enabled (removes ghost accounts when MM users are deleted)
+
+If IBR is disabled or unsupported, the plugin falls back to sending as the bridge bot with a `<username>` prefix.
+
+
+| Direction             | Without ghost users                                 | With ghost users                                   |
+| --------------------- | --------------------------------------------------- | -------------------------------------------------- |
+| **Mattermost → XMPP** | Bridge bot posts; body prefixed with `<mmUsername>` | Per-user XMPP account via XEP-0077 posts as itself |
+| **XMPP → Mattermost** | Shared Channels remote user (`xmpp-{nickname}`)     | Same (ghost setting only affects MM→XMPP)          |
+
+
+### 3. Map a channel
+
+In a Mattermost channel (as a system admin):
+
+```
+/xmppbridge map test1@conference.localhost
+```
+
+Check connection:
+
+```
+/xmppbridge status
+```
+
+## Data Persistence
 
 ## Data Persistence
 
 The server data is stored in Docker volumes:
+
 - `sidecar_openfire_data`: Openfire configuration and database
 - `sidecar_postgres_data`: PostgreSQL database (if you choose PostgreSQL instead of embedded DB)
 
 ## Troubleshooting
 
 ### Server Won't Start
+
 ```bash
 # Check if ports are already in use
-lsof -i :9090
+lsof -i :19090
 lsof -i :5222
 
 # View server logs
@@ -143,18 +253,20 @@ make devserver_logs
 ```
 
 ### Reset Everything
+
 ```bash
 # This removes all data and containers
 make devserver_clean
 ```
 
 ### Test Different Configurations
+
 ```bash
 # Test with custom server settings
 go run cmd/xmpp-client-doctor/main.go \
   -server="localhost:5222" \
-  -username="testuser@localhost" \
-  -password="testpass" \
+  -username="bridge@localhost" \
+  -password="bridgepass" \
   -insecure-skip-verify=true \
   -verbose=true
 ```
@@ -164,4 +276,8 @@ go run cmd/xmpp-client-doctor/main.go \
 - The server uses self-signed certificates, so the doctor tool defaults to `-insecure-skip-verify=true`
 - All data persists between container restarts unless you run `make devserver_clean`
 - The PostgreSQL and Adminer services are included but optional (you can use embedded database)
-- The server takes ~30 seconds to fully start up after `docker compose up`
+- The web client is configured entirely through `environment:` vars on the `xmpp-web`
+service; it renders them into `/local.js`, which you can curl to check the live config
+- `xmpp-web` returns `502` on the WebSocket path until Openfire finishes booting
+- The server takes \~30 seconds to fully start up after `docker compose up`
+
