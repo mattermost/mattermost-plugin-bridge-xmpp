@@ -55,6 +55,9 @@ type Client struct {
 	// Message handling for bridge integration
 	messageHandler mux.MessageHandlerFunc // Bridge handler for incoming messages
 
+	// nickname used when joining MUC rooms. Empty means the JID localpart.
+	nickname string
+
 	// Message deduplication cache to handle XMPP server duplicates
 	dedupeCache *ttlcache.Cache[string, time.Time]
 
@@ -482,6 +485,22 @@ func (c *Client) ExtractMessageBody(t xmlstream.TokenReadEncoder) (string, error
 	return fullMsg.Body, nil
 }
 
+// SetNickname overrides the nickname used when joining MUC rooms. Ghost users set
+// this so occupants see a Mattermost username rather than the account ID their JID
+// is built from.
+func (c *Client) SetNickname(nickname string) {
+	c.nickname = nickname
+}
+
+// mucNickname returns the nickname to join rooms under, defaulting to the JID
+// localpart for the bridge account.
+func (c *Client) mucNickname() string {
+	if c.nickname != "" {
+		return c.nickname
+	}
+	return c.jidAddr.Localpart()
+}
+
 // JoinRoom joins an XMPP Multi-User Chat room
 func (c *Client) JoinRoom(roomJID string) error {
 	if c.session == nil {
@@ -499,8 +518,7 @@ func (c *Client) JoinRoom(roomJID string) error {
 		return fmt.Errorf("failed to parse room JID: %w", err)
 	}
 
-	// Use our username as nickname
-	nickname := c.jidAddr.Localpart()
+	nickname := c.mucNickname()
 	roomWithNickname, err := room.WithResource(nickname)
 	if err != nil {
 		return fmt.Errorf("failed to add nickname to room JID: %w", err)
@@ -549,8 +567,7 @@ func (c *Client) LeaveRoom(roomJID string) error {
 		return fmt.Errorf("failed to parse room JID: %w", err)
 	}
 
-	// Use our username as nickname
-	nickname := c.jidAddr.Localpart()
+	nickname := c.mucNickname()
 	roomWithNickname, err := room.WithResource(nickname)
 	if err != nil {
 		return fmt.Errorf("failed to add nickname to room JID: %w", err)

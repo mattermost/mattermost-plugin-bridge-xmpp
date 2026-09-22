@@ -95,8 +95,10 @@ bridge's own echo**. It never reaches Mattermost, and nothing is logged. Openfir
 permits this because both sessions share one bare JID, so you do not even get a nickname
 conflict to warn you.
 
-For the same reason, do not give a human account a username starting with the ghost user
-prefix (`mm_` by default), because those nicknames are also treated as bridge-owned.
+Ghost users join rooms as `<mattermostUsername> (Mattermost)` so the occupant list shows
+readable names instead of the account IDs their JIDs are built from. That suffix is how
+loop detection recognises them, so for the same reason do not pick a human XMPP nickname
+ending in ` (Mattermost)`.
 
 ### 4. Create Test MUC Room
 
@@ -214,7 +216,7 @@ If IBR is disabled or unsupported, the plugin falls back to sending as the bridg
 
 | Direction             | Without ghost users                                 | With ghost users                                   |
 | --------------------- | --------------------------------------------------- | -------------------------------------------------- |
-| **Mattermost → XMPP** | Bridge bot posts; body prefixed with `<mmUsername>` | Per-user XMPP account via XEP-0077 posts as itself |
+| **Mattermost → XMPP** | Bridge bot posts; body prefixed with `<mmUsername>` | Per-user XMPP account via XEP-0077, joining as `<mmUsername> (Mattermost)` |
 | **XMPP → Mattermost** | Shared Channels remote user (`xmpp-{nickname}`)     | Same (ghost setting only affects MM→XMPP)          |
 
 
