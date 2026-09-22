@@ -71,7 +71,7 @@ func (p *Plugin) OnActivate() error {
 	cfg := p.getConfiguration()
 
 	// Register the plugin for shared channels
-	if err := p.registerForSharedChannels(); err != nil {
+	if err := p.registerForSharedChannels(cfg); err != nil {
 		return fmt.Errorf("failed to register for shared channels: %w", err)
 	}
 
@@ -176,7 +176,7 @@ func (p *Plugin) initBridges(cfg *config.Configuration) error {
 	return nil
 }
 
-func (p *Plugin) registerForSharedChannels() error {
+func (p *Plugin) registerForSharedChannels(cfg *config.Configuration) error {
 	botUserID, err := p.API.EnsureBotUser(&model.Bot{
 		Username:    "mattermost-bridge",
 		DisplayName: "Mattermost Bridge",
@@ -188,12 +188,23 @@ func (p *Plugin) registerForSharedChannels() error {
 
 	p.botUserID = botUserID
 
+	// One remote per XMPP server, identified by its URL. Left empty when the server
+	// is not configured yet, which falls back to the single "plugin_<id>" remote.
+	// ponytail: the remote is only registered at activation, so changing
+	// XMPPServerURL leaves the old remote behind; re-register on config change if
+	// switching servers without a restart needs to work.
+	var siteURL string
+	if cfg.XMPPServerURL != "" {
+		siteURL = "xmpp://" + cfg.XMPPServerURL
+	}
+
 	opts := model.RegisterPluginOpts{
 		Displayname:  "XMPP-Bridge",
 		PluginID:     manifest.Id,
 		CreatorID:    botUserID,
 		AutoShareDMs: false,
 		AutoInvited:  false,
+		SiteURL:      siteURL,
 	}
 
 	remoteID, appErr := p.API.RegisterPluginForSharedChannels(opts)
@@ -204,7 +215,7 @@ func (p *Plugin) registerForSharedChannels() error {
 	// Store the remote ID for use in sync operations
 	p.remoteID = remoteID
 
-	p.logger.LogInfo("Successfully registered plugin for shared channels", "remote_id", remoteID)
+	p.logger.LogInfo("Successfully registered plugin for shared channels", "remote_id", remoteID, "site_url", siteURL)
 	return nil
 }
 
