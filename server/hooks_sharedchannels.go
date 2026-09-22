@@ -18,8 +18,6 @@ func (p *Plugin) OnSharedChannelsPing(remoteCluster *model.RemoteCluster) bool {
 		remoteClusterID = remoteCluster.RemoteId
 	}
 
-	p.logger.LogDebug("OnSharedChannelsPing called", "remote_cluster_id", remoteClusterID)
-
 	p.logger.LogDebug("Received shared channels ping", "remote_cluster_id", remoteClusterID)
 
 	// If sync is disabled, we're still "healthy" but not actively processing
@@ -38,8 +36,10 @@ func (p *Plugin) OnSharedChannelsPing(remoteCluster *model.RemoteCluster) bool {
 	bridge, err := p.bridgeManager.GetBridge("xmpp")
 	if err != nil {
 		p.logger.LogWarn("XMPP bridge not available during ping", "error", err, "remote_cluster_id", remoteClusterID)
-		// Return true if bridge is not registered - this might be expected during startup/shutdown
-		return false
+		// The bridge is briefly unregistered during startup and shutdown. Reporting
+		// unhealthy there marks the remote offline, and a channel mapped while the
+		// remote is offline is stored as a pending invite that never syncs.
+		return true
 	}
 
 	// Perform active ping test on the XMPP bridge
