@@ -420,7 +420,14 @@ func (m *BridgeManager) shareChannel(req *model.CreateChannelMappingRequest) err
 		return fmt.Errorf("failed to share channel via API: %w", err)
 	}
 
-	m.logger.LogInfo("Successfully shared channel", "channel_id", req.ChannelID, "shared_channel_id", sharedChannel.ChannelId)
+	// ShareChannel only marks the channel as shared; nothing syncs until a remote is
+	// invited to it. Invite this plugin's own remote so the sync service starts
+	// delivering posts to OnSharedChannelsSyncMsg.
+	if err = m.api.InviteRemoteToChannel(req.ChannelID, m.remoteID, req.UserID, false); err != nil {
+		return fmt.Errorf("failed to invite bridge remote to channel: %w", err)
+	}
+
+	m.logger.LogInfo("Successfully shared channel", "channel_id", req.ChannelID, "shared_channel_id", sharedChannel.ChannelId, "remote_id", m.remoteID)
 	return nil
 }
 
