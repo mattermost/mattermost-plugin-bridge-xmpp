@@ -274,8 +274,9 @@ func (m *BridgeManager) CreateChannelMapping(req *model.CreateChannelMappingRequ
 		return fmt.Errorf("bridge '%s' is not connected", req.BridgeName)
 	}
 
-	// Check if channel mapping already exists on the bridge
-	existingChannelID, err := bridge.GetChannelMapping(req.BridgeChannelID)
+	// Check if the bridge channel is already mapped. This is a reverse lookup
+	// (bridge channel -> Mattermost channel), so it must not use GetChannelMapping.
+	existingChannelID, err := bridge.GetChannelMappingForBridge(req.BridgeName, req.BridgeChannelID)
 	if err != nil {
 		m.logger.LogError("Failed to check channel mapping", "bridge_channel_id", req.BridgeChannelID, "error", err)
 		return fmt.Errorf("failed to check channel mapping: %w", err)
@@ -325,11 +326,17 @@ func (m *BridgeManager) CreateChannelMapping(req *model.CreateChannelMappingRequ
 		return fmt.Errorf("failed to create channel mapping in Mattermost bridge: %w", err)
 	}
 
-	// Share the channel using Mattermost's shared channels API
+	// Share the channel using Mattermost's shared channels API. Without this the
+	// channel never syncs, so roll the mappings back and report the failure.
 	if err = m.shareChannel(req); err != nil {
 		m.logger.LogError("Failed to share channel", "channel_id", req.ChannelID, "bridge_channel_id", req.BridgeChannelID, "error", err)
-		// Don't fail the entire operation if sharing fails, but log the error
-		m.logger.LogWarn("Channel mapping created but sharing failed - channel may not sync properly")
+		if rbErr := bridge.DeleteChannelMapping(req.ChannelID); rbErr != nil {
+			m.logger.LogError("Failed to roll back bridge channel mapping", "channel_id", req.ChannelID, "bridge_name", req.BridgeName, "error", rbErr)
+		}
+		if rbErr := mattermostBridge.DeleteChannelMapping(req.ChannelID); rbErr != nil {
+			m.logger.LogError("Failed to roll back Mattermost channel mapping", "channel_id", req.ChannelID, "error", rbErr)
+		}
+		return fmt.Errorf("failed to share channel: %w", err)
 	}
 
 	m.logger.LogInfo("Successfully created channel mapping", "channel_id", req.ChannelID, "bridge_name", req.BridgeName, "bridge_channel_id", req.BridgeChannelID)
