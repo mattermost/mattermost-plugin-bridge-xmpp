@@ -666,26 +666,31 @@ func (b *xmppBridge) ID() string {
 	return b.bridgeID
 }
 
-// isBridgeUserMessage checks if the incoming XMPP message is from our bridge user to prevent loops
+// isBridgeUserMessage checks if the incoming XMPP message was sent by this bridge,
+// either as the bridge account itself or as one of its ghost users, so it is not
+// echoed back to Mattermost as a duplicate.
+//
+// Both accounts join a MUC with their JID localpart as the nickname, so the room
+// resource identifies the sender: the bridge's own localpart, or the configured
+// ghost user prefix. Anything else is a real XMPP participant.
 func (b *xmppBridge) isBridgeUserMessage(msg *stanza.Message) bool {
-	// Skip messages from our own XMPP user to prevent loops
-	// In MUC, messages come back as roomJID/nickname, so we need to check the nickname/resource
 	bridgeJID := b.bridgeClient.GetJID()
-	bridgeNickname := bridgeJID.Localpart() // Use localpart as nickname
+	bridgeNickname := bridgeJID.Localpart()
 	incomingResource := msg.From.Resourcepart()
+
+	b.configMu.RLock()
+	ghostPrefix := b.config.XMPPGhostUserPrefix
+	b.configMu.RUnlock()
+
+	isBridgeUser := incomingResource == bridgeNickname ||
+		(ghostPrefix != "" && strings.HasPrefix(incomingResource, ghostPrefix))
 
 	b.logger.LogDebug("Bridge user comparison details",
 		"bridge_jid", bridgeJID.String(),
 		"bridge_nickname", bridgeNickname,
-		"incoming_resource", incomingResource)
-
-	// Check multiple ways this could be our bridge user:
-	// 1. Direct nickname match
-	// 2. Resource starts with "mattermost_" (common pattern)
-	// 3. Resource contains bridge-related identifiers
-	isBridgeUser := incomingResource == bridgeNickname ||
-		strings.HasPrefix(incomingResource, "mattermost_") ||
-		strings.Contains(incomingResource, "bridge")
+		"ghost_prefix", ghostPrefix,
+		"incoming_resource", incomingResource,
+		"is_bridge_user", isBridgeUser)
 
 	return isBridgeUser
 }
