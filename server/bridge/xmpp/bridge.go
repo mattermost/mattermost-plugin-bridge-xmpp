@@ -43,7 +43,6 @@ type xmppBridge struct {
 
 	// Connection management
 	connected atomic.Bool
-	ctx       context.Context
 	cancel    context.CancelFunc
 
 	// Current configuration
@@ -57,13 +56,10 @@ type xmppBridge struct {
 
 // NewBridge creates a new XMPP bridge
 func NewBridge(log logger.Logger, api plugin.API, store kvstore.KVStore, cfg *config.Configuration, bridgeID, remoteID, botUserID string) pluginModel.Bridge {
-	ctx, cancel := context.WithCancel(context.Background())
 	b := &xmppBridge{
 		logger:           log,
 		api:              api,
 		kvstore:          store,
-		ctx:              ctx,
-		cancel:           cancel,
 		channelMappings:  make(map[string]string),
 		config:           cfg,
 		incomingMessages: make(chan *pluginModel.DirectionalMessage, defaultMessageBufferSize),
@@ -171,8 +167,15 @@ func (b *xmppBridge) UpdateConfiguration(cfg *config.Configuration) error {
 	b.configMu.Lock()
 	b.config = cfg
 
-	// Initialize or update XMPP client with new configuration
-	if !cfg.Equals(oldConfig) {
+	changed := !cfg.Equals(oldConfig)
+
+	// Mattermost fires this hook for unrelated server config saves too; don't drop a healthy connection for those
+	if !changed && b.connected.Load() {
+		b.configMu.Unlock()
+		return nil
+	}
+
+	if changed {
 		if b.bridgeClient != nil && b.bridgeClient.Disconnect() != nil {
 			b.logger.LogError("Failed to disconnect old XMPP bridge client")
 		}
@@ -219,6 +222,9 @@ func (b *xmppBridge) Start() error {
 
 	b.logger.LogInfo("Starting Mattermost to XMPP bridge", "xmpp_server", cfg.XMPPServerURL, "username", cfg.XMPPUsername)
 
+	var ctx context.Context
+	ctx, b.cancel = context.WithCancel(context.Background())
+
 	// Connect to XMPP server
 	if err := b.connectToXMPP(); err != nil {
 		return fmt.Errorf("failed to connect to XMPP server: %w", err)
@@ -228,7 +234,7 @@ func (b *xmppBridge) Start() error {
 	b.userManager = b.createUserManager(cfg, b.bridgeID, b.logger, b.kvstore)
 
 	// Start the user manager to enable lifecycle management
-	if err := b.userManager.Start(b.ctx); err != nil {
+	if err := b.userManager.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start user manager: %w", err)
 	}
 
@@ -238,7 +244,7 @@ func (b *xmppBridge) Start() error {
 	}
 
 	// Start connection monitor
-	go b.connectionMonitor()
+	go b.connectionMonitor(ctx)
 
 	b.logger.LogInfo("Mattermost to XMPP bridge started successfully")
 	return nil
@@ -406,25 +412,25 @@ func (b *xmppBridge) getAllChannelMappings() (map[string]string, error) {
 }
 
 // connectionMonitor monitors the XMPP connection
-func (b *xmppBridge) connectionMonitor() {
+func (b *xmppBridge) connectionMonitor(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-b.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			if err := b.Ping(); err != nil {
 				b.logger.LogWarn("XMPP connection check failed", "error", err)
-				b.handleReconnection()
+				b.handleReconnection(ctx)
 			}
 		}
 	}
 }
 
 // handleReconnection attempts to reconnect to XMPP and rejoin rooms
-func (b *xmppBridge) handleReconnection() {
+func (b *xmppBridge) handleReconnection(ctx context.Context) {
 	b.configMu.RLock()
 	cfg := b.config
 	b.configMu.RUnlock()
@@ -446,7 +452,7 @@ func (b *xmppBridge) handleReconnection() {
 		backoff := time.Duration(1<<i) * time.Second
 
 		select {
-		case <-b.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-time.After(backoff):
 		}

@@ -291,6 +291,12 @@ func (c *Client) Connect() error {
 		return nil // Already connected
 	}
 
+	// Disconnect cancels the context and stops the dedupe cache, so both must be revived on reconnect
+	if c.ctx.Err() != nil {
+		c.ctx, c.cancel = context.WithCancel(context.Background())
+	}
+	go c.dedupeCache.Start()
+
 	// Reset session ready channel for reconnection
 	c.sessionReady = make(chan struct{})
 	c.sessionServing = false
