@@ -2,11 +2,11 @@ name: xmpp-bridge-openfire
 
 services:
   openfire:
-    image: nasqueron/openfire:4.7.1
+    image: ghcr.io/igniterealtime/openfire:v5.1.2
     container_name: openfire-dev
     restart: unless-stopped
     ports:
-      - "9090:9090" # Admin console (HTTP)
+      - "19090:9090" # Admin console (HTTP)
       - "9091:9091" # Admin console (HTTPS)
       - "5222:5222" # XMPP client connections
       - "5223:5223" # XMPP client connections (SSL)
@@ -14,6 +14,21 @@ services:
       - "7777:7777" # File transfer proxy
     volumes:
       - openfire_data:/var/lib/openfire
+
+  converse:
+    image: nginx:alpine
+    container_name: converse-dev
+    restart: unless-stopped
+    depends_on:
+      - openfire
+    ports:
+      - "8080:80" # Web XMPP client
+    volumes:
+      # Converse.js itself is loaded from cdn.conversejs.org, so this container only
+      # serves the init page and proxies /xmpp-websocket to Openfire.
+      - ./converse/index.html:/usr/share/nginx/html/index.html:ro
+      - ./converse/sw.js:/usr/share/nginx/html/sw.js:ro
+      - ./converse/nginx.conf:/etc/nginx/conf.d/default.conf:ro
 
 volumes:
   openfire_data:

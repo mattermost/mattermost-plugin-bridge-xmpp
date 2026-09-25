@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,6 +34,7 @@ type xmppBridge struct {
 	userManager  pluginModel.BridgeUserManager
 	bridgeID     string // Bridge identifier used for registration
 	remoteID     string // Remote ID for shared channels
+	botUserID    string // Bot user credited as the creator of shared channel invites
 
 	// Message handling
 	messageHandler   *xmppMessageHandler
@@ -43,7 +43,6 @@ type xmppBridge struct {
 
 	// Connection management
 	connected atomic.Bool
-	ctx       context.Context
 	cancel    context.CancelFunc
 
 	// Current configuration
@@ -56,19 +55,17 @@ type xmppBridge struct {
 }
 
 // NewBridge creates a new XMPP bridge
-func NewBridge(log logger.Logger, api plugin.API, store kvstore.KVStore, cfg *config.Configuration, bridgeID, remoteID string) pluginModel.Bridge {
-	ctx, cancel := context.WithCancel(context.Background())
+func NewBridge(log logger.Logger, api plugin.API, store kvstore.KVStore, cfg *config.Configuration, bridgeID, remoteID, botUserID string) pluginModel.Bridge {
 	b := &xmppBridge{
 		logger:           log,
 		api:              api,
 		kvstore:          store,
-		ctx:              ctx,
-		cancel:           cancel,
 		channelMappings:  make(map[string]string),
 		config:           cfg,
 		incomingMessages: make(chan *pluginModel.DirectionalMessage, defaultMessageBufferSize),
 		bridgeID:         bridgeID,
 		remoteID:         remoteID,
+		botUserID:        botUserID,
 	}
 
 	// Initialize handlers after bridge is created
@@ -170,8 +167,15 @@ func (b *xmppBridge) UpdateConfiguration(cfg *config.Configuration) error {
 	b.configMu.Lock()
 	b.config = cfg
 
-	// Initialize or update XMPP client with new configuration
-	if !cfg.Equals(oldConfig) {
+	changed := !cfg.Equals(oldConfig)
+
+	// Mattermost fires this hook for unrelated server config saves too; don't drop a healthy connection for those
+	if !changed && b.connected.Load() {
+		b.configMu.Unlock()
+		return nil
+	}
+
+	if changed {
 		if b.bridgeClient != nil && b.bridgeClient.Disconnect() != nil {
 			b.logger.LogError("Failed to disconnect old XMPP bridge client")
 		}
@@ -218,6 +222,9 @@ func (b *xmppBridge) Start() error {
 
 	b.logger.LogInfo("Starting Mattermost to XMPP bridge", "xmpp_server", cfg.XMPPServerURL, "username", cfg.XMPPUsername)
 
+	var ctx context.Context
+	ctx, b.cancel = context.WithCancel(context.Background())
+
 	// Connect to XMPP server
 	if err := b.connectToXMPP(); err != nil {
 		return fmt.Errorf("failed to connect to XMPP server: %w", err)
@@ -227,7 +234,7 @@ func (b *xmppBridge) Start() error {
 	b.userManager = b.createUserManager(cfg, b.bridgeID, b.logger, b.kvstore)
 
 	// Start the user manager to enable lifecycle management
-	if err := b.userManager.Start(b.ctx); err != nil {
+	if err := b.userManager.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start user manager: %w", err)
 	}
 
@@ -237,7 +244,7 @@ func (b *xmppBridge) Start() error {
 	}
 
 	// Start connection monitor
-	go b.connectionMonitor()
+	go b.connectionMonitor(ctx)
 
 	b.logger.LogInfo("Mattermost to XMPP bridge started successfully")
 	return nil
@@ -319,9 +326,31 @@ func (b *xmppBridge) loadAndJoinMappedChannels() error {
 		if err := b.joinXMPPRoom(channelID, roomJID); err != nil {
 			b.logger.LogWarn("Failed to join room", "channel_id", channelID, "room_jid", roomJID, "error", err)
 		}
+		b.ensureRemoteInvited(channelID)
 	}
 
 	return nil
+}
+
+// ensureRemoteInvited re-invites this bridge's remote to a mapped channel.
+//
+// Mappings live in the KV store and outlive the remote, so a channel can be mapped
+// while Mattermost has no SharedChannelRemote for it, in which case nothing syncs
+// until something invites the remote again. The invite is skipped server-side when
+// the remote is already invited, so this is a no-op for healthy channels and does
+// not disturb their sync cursors.
+func (b *xmppBridge) ensureRemoteInvited(channelID string) {
+	if b.remoteID == "" || b.botUserID == "" {
+		return
+	}
+
+	if err := b.api.InviteRemoteToChannel(channelID, b.remoteID, b.botUserID, false); err != nil {
+		b.logger.LogWarn("Failed to ensure bridge remote is invited to mapped channel",
+			"channel_id", channelID, "remote_id", b.remoteID, "error", err)
+		return
+	}
+
+	b.logger.LogDebug("Bridge remote invited to mapped channel", "channel_id", channelID, "remote_id", b.remoteID)
 }
 
 // joinXMPPRoom joins an XMPP room and updates the local cache
@@ -383,25 +412,25 @@ func (b *xmppBridge) getAllChannelMappings() (map[string]string, error) {
 }
 
 // connectionMonitor monitors the XMPP connection
-func (b *xmppBridge) connectionMonitor() {
+func (b *xmppBridge) connectionMonitor(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-b.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			if err := b.Ping(); err != nil {
 				b.logger.LogWarn("XMPP connection check failed", "error", err)
-				b.handleReconnection()
+				b.handleReconnection(ctx)
 			}
 		}
 	}
 }
 
 // handleReconnection attempts to reconnect to XMPP and rejoin rooms
-func (b *xmppBridge) handleReconnection() {
+func (b *xmppBridge) handleReconnection(ctx context.Context) {
 	b.configMu.RLock()
 	cfg := b.config
 	b.configMu.RUnlock()
@@ -423,7 +452,7 @@ func (b *xmppBridge) handleReconnection() {
 		backoff := time.Duration(1<<i) * time.Second
 
 		select {
-		case <-b.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-time.After(backoff):
 		}
@@ -666,26 +695,25 @@ func (b *xmppBridge) ID() string {
 	return b.bridgeID
 }
 
-// isBridgeUserMessage checks if the incoming XMPP message is from our bridge user to prevent loops
+// isBridgeUserMessage checks if the incoming XMPP message was sent by this bridge,
+// either as the bridge account itself or as one of its ghost users, so it is not
+// echoed back to Mattermost as a duplicate.
+//
+// The room resource is the sender's nickname. The bridge account joins under its
+// JID localpart; ghost users join under a nickname built by ghostNickname. Anything
+// else is a real XMPP participant.
 func (b *xmppBridge) isBridgeUserMessage(msg *stanza.Message) bool {
-	// Skip messages from our own XMPP user to prevent loops
-	// In MUC, messages come back as roomJID/nickname, so we need to check the nickname/resource
 	bridgeJID := b.bridgeClient.GetJID()
-	bridgeNickname := bridgeJID.Localpart() // Use localpart as nickname
+	bridgeNickname := bridgeJID.Localpart()
 	incomingResource := msg.From.Resourcepart()
+
+	isBridgeUser := incomingResource == bridgeNickname || isGhostNickname(incomingResource)
 
 	b.logger.LogDebug("Bridge user comparison details",
 		"bridge_jid", bridgeJID.String(),
 		"bridge_nickname", bridgeNickname,
-		"incoming_resource", incomingResource)
-
-	// Check multiple ways this could be our bridge user:
-	// 1. Direct nickname match
-	// 2. Resource starts with "mattermost_" (common pattern)
-	// 3. Resource contains bridge-related identifiers
-	isBridgeUser := incomingResource == bridgeNickname ||
-		strings.HasPrefix(incomingResource, "mattermost_") ||
-		strings.Contains(incomingResource, "bridge")
+		"incoming_resource", incomingResource,
+		"is_bridge_user", isBridgeUser)
 
 	return isBridgeUser
 }

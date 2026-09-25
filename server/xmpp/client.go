@@ -55,6 +55,9 @@ type Client struct {
 	// Message handling for bridge integration
 	messageHandler mux.MessageHandlerFunc // Bridge handler for incoming messages
 
+	// nickname used when joining MUC rooms. Empty means the JID localpart.
+	nickname string
+
 	// Message deduplication cache to handle XMPP server duplicates
 	dedupeCache *ttlcache.Cache[string, time.Time]
 
@@ -142,10 +145,17 @@ func NewClient(serverURL, username, password, resource, remoteID string, log log
 	mucClient := &muc.Client{}
 	client.mucClient = mucClient
 
-	// Create mux with MUC client and our message handler
+	// Create mux with MUC client and our message handler.
+	//
+	// The payload filter must name <body> rather than being the xml.Name{} wildcard.
+	// mellium dispatches a message once per payload child, and the wildcard matches
+	// every one of them, so a single stanza carrying <body>, <origin-id>, <stanza-id>
+	// and friends invoked the handler once per child and relied on the dedupe cache to
+	// discard the repeats. Scoping to <body> dispatches exactly once per message that
+	// has text, and not at all for chat states and markers, which carry no body.
 	messageMux := mux.New("jabber:client",
 		muc.HandleClient(mucClient),
-		mux.MessageFunc(stanza.GroupChatMessage, xml.Name{}, client.handleIncomingMessage))
+		mux.MessageFunc(stanza.GroupChatMessage, xml.Name{Local: "body"}, client.handleIncomingMessage))
 	client.mux = messageMux
 
 	return client
@@ -280,6 +290,12 @@ func (c *Client) Connect() error {
 	if c.session != nil {
 		return nil // Already connected
 	}
+
+	// Disconnect cancels the context and stops the dedupe cache, so both must be revived on reconnect
+	if c.ctx.Err() != nil {
+		c.ctx, c.cancel = context.WithCancel(context.Background())
+	}
+	go c.dedupeCache.Start()
 
 	// Reset session ready channel for reconnection
 	c.sessionReady = make(chan struct{})
@@ -475,6 +491,22 @@ func (c *Client) ExtractMessageBody(t xmlstream.TokenReadEncoder) (string, error
 	return fullMsg.Body, nil
 }
 
+// SetNickname overrides the nickname used when joining MUC rooms. Ghost users set
+// this so occupants see a Mattermost username rather than the account ID their JID
+// is built from.
+func (c *Client) SetNickname(nickname string) {
+	c.nickname = nickname
+}
+
+// mucNickname returns the nickname to join rooms under, defaulting to the JID
+// localpart for the bridge account.
+func (c *Client) mucNickname() string {
+	if c.nickname != "" {
+		return c.nickname
+	}
+	return c.jidAddr.Localpart()
+}
+
 // JoinRoom joins an XMPP Multi-User Chat room
 func (c *Client) JoinRoom(roomJID string) error {
 	if c.session == nil {
@@ -492,8 +524,7 @@ func (c *Client) JoinRoom(roomJID string) error {
 		return fmt.Errorf("failed to parse room JID: %w", err)
 	}
 
-	// Use our username as nickname
-	nickname := c.jidAddr.Localpart()
+	nickname := c.mucNickname()
 	roomWithNickname, err := room.WithResource(nickname)
 	if err != nil {
 		return fmt.Errorf("failed to add nickname to room JID: %w", err)
@@ -542,8 +573,7 @@ func (c *Client) LeaveRoom(roomJID string) error {
 		return fmt.Errorf("failed to parse room JID: %w", err)
 	}
 
-	// Use our username as nickname
-	nickname := c.jidAddr.Localpart()
+	nickname := c.mucNickname()
 	roomWithNickname, err := room.WithResource(nickname)
 	if err != nil {
 		return fmt.Errorf("failed to add nickname to room JID: %w", err)

@@ -157,8 +157,8 @@ go run cmd/xmpp-client-doctor/main.go \
 ### Flags
 
 - `-server`: XMPP server address (default: `localhost:5222`)
-- `-username`: XMPP username/JID (default: `testuser@localhost`)
-- `-password`: XMPP password (default: `testpass`)
+- `-username`: XMPP username/JID (default: `admin@localhost`)
+- `-password`: XMPP password (default: `admin`)
 - `-resource`: XMPP resource (default: `doctor`)
 - `-verbose`: Enable verbose logging (default: `true`)
 - `-insecure-skip-verify`: Skip TLS certificate verification for development (default: `true`)
@@ -174,8 +174,11 @@ docker-compose up -d
 
 The development server runs Openfire XMPP server with:
 - XMPP client connections on port 5222
-- Admin console on http://localhost:9090
-- Default test credentials: `testuser@localhost` / `testpass`
+- Admin console on http://localhost:19090
+- Three accounts, created during setup: `admin@localhost` / `admin` (admin console and
+  doctor default), `bridge@localhost` / `bridgepass` (the plugin's bridge account), and
+  `test@localhost` / `testpass` (a human XMPP client). The bridge and human accounts must
+  stay separate; see [sidecar/README.md](./sidecar/README.md#why-two-accounts).
 
 ### Deploying with credentials
 
