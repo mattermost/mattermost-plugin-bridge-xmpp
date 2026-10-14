@@ -6,8 +6,8 @@ services:
     container_name: openfire-dev
     restart: unless-stopped
     ports:
-      - "19090:9090" # Admin console (HTTP)
-      - "9091:9091" # Admin console (HTTPS)
+      - "127.0.0.1:19090:9090" # Admin console (HTTP)
+      - "127.0.0.1:9091:9091" # Admin console (HTTPS)
       - "5222:5222" # XMPP client connections
       - "5223:5223" # XMPP client connections (SSL)
       - "5269:5269" # XMPP server connections
@@ -22,7 +22,7 @@ services:
     depends_on:
       - openfire
     ports:
-      - "8080:80" # Web XMPP client
+      - "127.0.0.1:8080:80" # Web XMPP client
     volumes:
       # Converse.js itself is loaded from cdn.conversejs.org, so this container only
       # serves the init page and proxies /xmpp-websocket to Openfire.
