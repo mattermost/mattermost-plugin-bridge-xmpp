@@ -424,6 +424,11 @@ func (m *BridgeManager) shareChannel(req *model.CreateChannelMappingRequest) err
 	// invited to it. Invite this plugin's own remote so the sync service starts
 	// delivering posts to OnSharedChannelsSyncMsg.
 	if err = m.api.InviteRemoteToChannel(req.ChannelID, m.remoteID, req.UserID, false); err != nil {
+		// The caller rolls the mappings back, and unmap refuses a channel with no
+		// mapping, so the share has to be undone here or nothing can undo it.
+		if unshareErr := m.unshareChannel(req.ChannelID); unshareErr != nil {
+			m.logger.LogError("Failed to unshare channel after a failed invite", "channel_id", req.ChannelID, "error", unshareErr)
+		}
 		return fmt.Errorf("failed to invite bridge remote to channel: %w", err)
 	}
 
