@@ -6,8 +6,6 @@ import (
 	"net"
 	"testing"
 	"time"
-
-	"github.com/jellydator/ttlcache/v3"
 )
 
 type nopLogger struct{}
@@ -53,33 +51,19 @@ func TestConnectKeepsLiveContext(t *testing.T) {
 	}
 }
 
-// Expired items are only evicted by the cleanup loop, so an eviction proves it is running.
-func dedupeCacheRunning(c *Client) bool {
-	evicted := make(chan struct{}, 1)
-	unsubscribe := c.dedupeCache.OnEviction(func(context.Context, ttlcache.EvictionReason, *ttlcache.Item[string, time.Time]) {
-		evicted <- struct{}{}
-	})
-	defer unsubscribe()
-	c.dedupeCache.Set("probe", time.Now(), 10*time.Millisecond)
-
-	select {
-	case <-evicted:
-		return true
-	case <-time.After(time.Second):
-		return false
-	}
-}
-
-func TestConnectRestartsDedupeCache(t *testing.T) {
+// Nothing sweeps the dedupe cache in the background, so Has must reject an expired
+// entry on its own. Deduplication would otherwise drop real messages forever.
+func TestDedupeCacheExpiresWithoutCleanupLoop(t *testing.T) {
 	c := newUnreachableClient(t)
-	if !dedupeCacheRunning(c) {
-		t.Fatal("dedupe cache cleanup not running after NewClient")
+
+	c.dedupeCache.Set("msg-1", time.Now(), 10*time.Millisecond)
+	if !c.dedupeCache.Has("msg-1") {
+		t.Fatal("a message id just stored should count as a duplicate")
 	}
-	c.dedupeCache.Stop()
 
-	_ = c.Connect()
+	time.Sleep(50 * time.Millisecond)
 
-	if !dedupeCacheRunning(c) {
-		t.Fatal("dedupe cache cleanup did not restart after Connect")
+	if c.dedupeCache.Has("msg-1") {
+		t.Fatal("an expired message id should no longer count as a duplicate")
 	}
 }

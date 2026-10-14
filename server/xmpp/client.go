@@ -29,6 +29,10 @@ const (
 
 	// messageDedupeTTL is the TTL for message deduplication cache
 	messageDedupeTTL = 30 * time.Second
+
+	// messageDedupeCapacity bounds the deduplication cache. Nothing sweeps expired
+	// entries in the background, so this is what reclaims their memory.
+	messageDedupeCapacity = 4096
 )
 
 // Client represents an XMPP client for communicating with XMPP servers.
@@ -119,13 +123,18 @@ type UserProfile struct {
 func NewClient(serverURL, username, password, resource, remoteID string, log logger.Logger) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Create TTL cache for message deduplication
+	// Create TTL cache for message deduplication.
+	//
+	// The cache runs without ttlcache's background cleanup loop. Has() checks expiry
+	// on every read, so deduplication stays correct without it, and the capacity bound
+	// reclaims memory by evicting the least recently used entry. Running the loop meant
+	// starting and stopping it around each connection, and Stop() returns immediately
+	// when a Start() goroutine has not reached its lock yet, which left a cleanup loop
+	// alive after a disconnect with nothing able to stop it.
 	dedupeCache := ttlcache.New(
 		ttlcache.WithTTL[string, time.Time](messageDedupeTTL),
+		ttlcache.WithCapacity[string, time.Time](messageDedupeCapacity),
 	)
-
-	// Start automatic cleanup in background
-	go dedupeCache.Start()
 
 	client := &Client{
 		serverURL:    serverURL,
@@ -291,11 +300,10 @@ func (c *Client) Connect() error {
 		return nil // Already connected
 	}
 
-	// Disconnect cancels the context and stops the dedupe cache, so both must be revived on reconnect
+	// Disconnect cancels the context, so it must be revived on reconnect
 	if c.ctx.Err() != nil {
 		c.ctx, c.cancel = context.WithCancel(context.Background())
 	}
-	go c.dedupeCache.Start()
 
 	// Reset session ready channel for reconnection
 	c.sessionReady = make(chan struct{})
@@ -448,9 +456,6 @@ func (c *Client) Disconnect() error {
 		c.session = nil
 		// Continue with cleanup even on timeout
 	}
-
-	// Stop the TTL cache cleanup goroutine
-	c.dedupeCache.Stop()
 
 	// Cancel the client context
 	c.cancel()
