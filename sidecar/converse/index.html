@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XMPP Bridge Dev Client</title>
+<link rel="stylesheet" href="https://cdn.conversejs.org/14.0.0/dist/converse.min.css">
+</head>
+<body>
+<!-- Converse 14 publishes an ES module (it uses import.meta and dynamic import() for
+     its lazy-loaded chunks), so it has to be imported rather than loaded via a plain
+     script tag, and it exposes no global. -->
+<script type="module">
+    import converse from 'https://cdn.conversejs.org/14.0.0/dist/converse.min.js';
+
+    converse.initialize({
+        // Served by the nginx in front of this page, proxied to openfire:7070/ws/.
+        websocket_url: 'ws://' + window.location.host + '/xmpp-websocket',
+        // Openfire publishes no XEP-0156 discovery records, and without this Converse
+        // would probe for them and ignore websocket_url.
+        discover_connection_methods: false,
+        // Chunks resolve against the module URL on their own, but sounds and emoji
+        // images are looked up under assets_path, which would otherwise be this origin.
+        assets_path: 'https://cdn.conversejs.org/14.0.0/dist/',
+        authentication: 'login',
+        allow_registration: false,
+        default_domain: 'localhost',
+        muc_domain: 'conference.localhost',
+        locked_domain: 'localhost',
+        view_mode: 'fullscreen',
+        auto_away: 0,
+        auto_xa: 0,
+        message_archiving: 'always',
+        play_sounds: false,
+    });
+</script>
+</body>
+</html>

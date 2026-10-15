@@ -5,7 +5,7 @@
 
 # XMPP server configuration
 XMPP_COMPOSE_FILE := sidecar/docker-compose.yml
-XMPP_ADMIN_URL := http://localhost:9090
+XMPP_ADMIN_URL := http://localhost:19090
 XMPP_SERVER_HOST := localhost
 XMPP_SERVER_PORT := 5222
 

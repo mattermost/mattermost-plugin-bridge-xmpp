@@ -77,6 +77,7 @@ func NewXMPPUserWithActivity(id, displayName, jid, password string, cfg *config.
 		tlsConfig,
 		log,
 	)
+	client.SetNickname(ghostNickname(displayName))
 
 	return &User{
 		id:                   id,
