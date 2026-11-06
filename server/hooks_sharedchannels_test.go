@@ -111,6 +111,19 @@ func TestOnSharedChannelsSyncMsg(t *testing.T) {
 		assert.Equal(t, []string{post1.Id, post3.Id}, bm.published)
 	})
 
+	t.Run("post whose user lookup returns nothing is reported in PostErrors", func(t *testing.T) {
+		p, api, bm := setupSyncPlugin(t, true)
+		missing := &model.Post{Id: model.NewId(), UserId: model.NewId()}
+		api.On("GetUser", missing.UserId).Return(nil, nil)
+		post2 := newLocalPost(api)
+
+		resp, err := p.OnSharedChannelsSyncMsg(newSyncMsg(missing, post2), &model.RemoteCluster{})
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{missing.Id}, resp.PostErrors)
+		assert.Equal(t, []string{post2.Id}, bm.published)
+	})
+
 	t.Run("disconnected XMPP fails the whole batch", func(t *testing.T) {
 		p, _, bm := setupSyncPlugin(t, false)
 		post1 := &model.Post{Id: model.NewId(), UserId: model.NewId()}

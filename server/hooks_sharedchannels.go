@@ -162,7 +162,11 @@ func (p *Plugin) processSyncPost(post *model.Post, channelID string, users map[s
 	user, appErr := p.API.GetUser(post.UserId)
 	if appErr != nil {
 		return false, fmt.Errorf("failed to get user %s for loop prevention: %w", post.UserId, appErr)
-	} else if user != nil && user.RemoteId != nil && *user.RemoteId != "" {
+	}
+	if user == nil {
+		return false, fmt.Errorf("user %s not found for loop prevention", post.UserId)
+	}
+	if user.RemoteId != nil && *user.RemoteId != "" {
 		p.logger.LogDebug("Skipping message from remote user to prevent loop",
 			"user_id", post.UserId,
 			"username", user.Username,
