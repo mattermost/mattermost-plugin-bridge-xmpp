@@ -124,6 +124,19 @@ func TestOnSharedChannelsSyncMsg(t *testing.T) {
 		assert.Equal(t, []string{post2.Id}, bm.published)
 	})
 
+	t.Run("post whose user no longer exists is skipped", func(t *testing.T) {
+		p, api, bm := setupSyncPlugin(t, true)
+		orphan := &model.Post{Id: model.NewId(), UserId: model.NewId()}
+		api.On("GetUser", orphan.UserId).Return(nil, model.NewAppError("GetUser", "app.user.missing.app_error", nil, "", http.StatusNotFound))
+		post2 := newLocalPost(api)
+
+		resp, err := p.OnSharedChannelsSyncMsg(newSyncMsg(orphan, post2), &model.RemoteCluster{})
+
+		require.NoError(t, err)
+		assert.Empty(t, resp.PostErrors)
+		assert.Equal(t, []string{post2.Id}, bm.published)
+	})
+
 	t.Run("disconnected XMPP fails the whole batch", func(t *testing.T) {
 		p, _, bm := setupSyncPlugin(t, false)
 		post1 := &model.Post{Id: model.NewId(), UserId: model.NewId()}

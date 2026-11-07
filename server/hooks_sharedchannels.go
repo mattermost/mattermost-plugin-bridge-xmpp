@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -147,7 +148,7 @@ var errMessageBus = errors.New("message bus unavailable")
 // processSyncPost converts a Mattermost post to a bridge message and routes it to XMPP.
 // It reports whether the post was published, as opposed to skipped for loop prevention.
 func (p *Plugin) processSyncPost(post *model.Post, channelID string, users map[string]*model.User) (bool, error) {
-	p.logger.LogDebug("Processing sync post", "post_id", post.Id, "channel_id", channelID, "users", users)
+	p.logger.LogDebug("Processing sync post", "post_id", post.Id, "channel_id", channelID)
 
 	// Skip messages from our own bot user to prevent loops
 	if post.UserId == p.botUserID {
@@ -160,6 +161,10 @@ func (p *Plugin) processSyncPost(post *model.Post, channelID string, users map[s
 	// Skip messages from remote users to prevent loops
 	// Remote users represent users from other bridges (e.g., XMPP users in Mattermost)
 	user, appErr := p.API.GetUser(post.UserId)
+	if appErr != nil && appErr.StatusCode == http.StatusNotFound {
+		p.logger.LogWarn("Skipping sync post whose user does not exist", "post_id", post.Id, "user_id", post.UserId)
+		return false, nil
+	}
 	if appErr != nil {
 		return false, fmt.Errorf("failed to get user %s for loop prevention: %w", post.UserId, appErr)
 	}
@@ -176,7 +181,6 @@ func (p *Plugin) processSyncPost(post *model.Post, channelID string, users map[s
 
 	// Find the user who created this post
 	var postUser *model.User
-	p.logger.LogInfo("Processing sync post", "post_id", post.UserId, "users", users)
 	if users != nil {
 		postUser = users[post.UserId]
 	}
