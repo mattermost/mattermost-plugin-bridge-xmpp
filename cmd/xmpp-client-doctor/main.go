@@ -399,7 +399,7 @@ func NewStructuredLogger(verbose bool) *StructuredLogger {
 	}
 
 	// Create tinted handler for colorized output
-	handler := tint.NewHandler(os.Stdout, &tint.Options{
+	handler := tint.NewTextHandler(os.Stdout, &tint.Options{
 		Level:      level,
 		TimeFormat: "15:04:05.000", // More concise time format
 		AddSource:  false,          // Don't show source file info
