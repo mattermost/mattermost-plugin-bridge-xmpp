@@ -179,6 +179,11 @@ func (p *Plugin) processSyncPost(post *model.Post, channelID string, users map[s
 		return false, nil
 	}
 
+	if post.Id != "" && !markSyncPost(post.Id) {
+		p.logger.LogDebug("Skipping already processed sync post", "post_id", post.Id)
+		return nil
+	}
+
 	// Find the user who created this post
 	var postUser *model.User
 	if users != nil {

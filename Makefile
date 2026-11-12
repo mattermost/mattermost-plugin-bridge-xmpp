@@ -342,10 +342,11 @@ detach: setup-attach
 	fi
 
 ## Runs any lints and unit tests defined for the server and webapp, if they exist.
+## XMPP Prosody integration tests require Docker; skip them with `go test -short`.
 .PHONY: test
 test: apply webapp/node_modules install-go-tools
 ifneq ($(HAS_SERVER),)
-	$(GOBIN)/gotestsum -- -v ./...
+	$(GOBIN)/gotestsum -- -v -count=1 -p 2 -timeout=20m ./...
 endif
 ifneq ($(HAS_WEBAPP),)
 	cd webapp && $(NPM) run test;
@@ -356,7 +357,7 @@ endif
 .PHONY: test-ci
 test-ci: apply webapp/node_modules install-go-tools
 ifneq ($(HAS_SERVER),)
-	$(GOBIN)/gotestsum --format standard-verbose --junitfile report.xml -- ./...
+	$(GOBIN)/gotestsum --format standard-verbose --junitfile report.xml -- -p 2 -timeout=20m ./...
 endif
 ifneq ($(HAS_WEBAPP),)
 	cd webapp && $(NPM) run test;

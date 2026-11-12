@@ -163,32 +163,31 @@ func (b *xmppBridge) UpdateConfiguration(cfg *config.Configuration) error {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	// Get current config to check if restart is needed
 	oldConfig := b.getConfiguration()
+	sameConfig := cfg.Equals(oldConfig)
 
-	// Update configuration under lock, then release immediately
 	b.configMu.Lock()
 	b.config = cfg
-
-	// Initialize or update XMPP client with new configuration
-	if !cfg.Equals(oldConfig) {
-		if b.bridgeClient != nil && b.bridgeClient.Disconnect() != nil {
-			b.logger.LogError("Failed to disconnect old XMPP bridge client")
-		}
-		b.bridgeClient = b.createXMPPClient(cfg)
-
-		// Recreate user manager since ghost user settings or XEP support may have changed
-		b.userManager = b.createUserManager(cfg, b.bridgeID, b.logger, b.kvstore)
-	}
 	b.configMu.Unlock()
 
-	// Stop the bridge
+	// Mattermost often fires OnConfigurationChange right after activate with the same
+	// settings. Stop()+Start() would cancel the live client context and fail reconnect.
+	if sameConfig && b.connected.Load() {
+		b.logger.LogDebug("XMPP bridge configuration unchanged, skipping restart")
+		return nil
+	}
+
 	if err := b.Stop(); err != nil {
 		b.logger.LogWarn("Error stopping bridge during restart", "error", err)
 	}
 
-	// Start the bridge with new configuration
-	// Start() method already uses getConfiguration() safely
+	// Stop cancels the bridge and client contexts; recreate both before Start.
+	b.configMu.Lock()
+	b.ctx, b.cancel = context.WithCancel(context.Background())
+	b.bridgeClient = b.createXMPPClient(cfg)
+	b.userManager = b.createUserManager(cfg, b.bridgeID, b.logger, b.kvstore)
+	b.configMu.Unlock()
+
 	if err := b.Start(); err != nil {
 		b.logger.LogError("Failed to restart bridge with new configuration", "error", err)
 		return fmt.Errorf("failed to restart bridge: %w", err)

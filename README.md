@@ -1,7 +1,6 @@
 # Mattermost XMPP Bridge Plugin
 
 [![Build Status](https://github.com/mattermost/mattermost-plugin-bridge-xmpp/actions/workflows/ci.yml/badge.svg)](https://github.com/mattermost/mattermost-plugin-bridge-xmpp/actions/workflows/ci.yml)
-[![E2E Status](https://github.com/mattermost/mattermost-plugin-bridge-xmpp/actions/workflows/e2e.yml/badge.svg)](https://github.com/mattermost/mattermost-plugin-bridge-xmpp/actions/workflows/e2e.yml)
 
 This plugin provides bidirectional message synchronization between Mattermost and XMPP servers, enabling seamless communication across both platforms.
 
